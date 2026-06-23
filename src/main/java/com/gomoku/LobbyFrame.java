@@ -325,7 +325,7 @@ public class LobbyFrame extends JFrame {
         } else {
             avatarName.setText(currentUser.username());
             infoLevel.setText("Lv." + currentUser.level());
-            infoMid.setText("MID: " + currentUser.id());
+            infoMid.setText("MID: " + currentUser.mid());
             infoRole.setText(switch (currentUser.role()) {
                 case "owner" -> "站长";
                 case "admin" -> "管理员";
@@ -579,7 +579,8 @@ public class LobbyFrame extends JFrame {
                 "{\"name\":\"" + name.trim().replace("\"", "\\\"") + "\","
                 + "\"user_id\":" + currentUser.id() + ","
                 + "\"user_name\":\"" + displayName.replace("\"", "\\\"") + "\","
-                + "\"host_avatar\":\"" + currentUser.avatar().replace("\"", "\\\"") + "\""
+                + "\"host_avatar\":\"" + currentUser.avatar().replace("\"", "\\\"") + "\","
+                + "\"host_mid\":\"" + currentUser.mid().replace("\"", "\\\"") + "\""
                 + pwdJson + "}");
         if (resp == null || !resp.contains("\"success\":true")) {
             JOptionPane.showMessageDialog(this, "创建房间失败");
@@ -635,7 +636,7 @@ public class LobbyFrame extends JFrame {
         }
     }
 
-    private record RoomEntry(int id, String roomCode, String name, String hostName, String hostAvatar, boolean hasPassword, int hostUid) {
+    private record RoomEntry(int id, String roomCode, String name, String hostName, String hostAvatar, boolean hasPassword, String hostMid) {
         @Override public String toString() { return "[" + roomCode + "] " + name + "  —  " + hostName; }
     }
 
@@ -748,7 +749,7 @@ public class LobbyFrame extends JFrame {
             model.clear();
             for (RoomEntry r : allRooms) {
                 if (q.isEmpty() || r.roomCode().toUpperCase().contains(q) || r.hostName().toUpperCase().contains(q)
-                        || String.valueOf(r.hostUid()).contains(q))
+                        || r.hostMid().toUpperCase().contains(q))
                     model.addElement(r);
             }
             if (sel >= 0 && sel < model.size()) list.setSelectedIndex(sel);
@@ -777,8 +778,8 @@ public class LobbyFrame extends JFrame {
                     String host = OnlinePlay.extractStr(obj, "host_name");
                     String avatar = OnlinePlay.extractStr(obj, "host_avatar");
                     boolean hasPwd = obj.contains("\"has_password\":true");
-                    int huid = OnlinePlay.extractInt(obj, "host_user_id");
-                    allRooms.add(new RoomEntry(id, code, rname, host, avatar, hasPwd, huid));
+                    String hmid = OnlinePlay.extractStr(obj, "host_mid");
+                    allRooms.add(new RoomEntry(id, code, rname, host, avatar, hasPwd, hmid));
                     pos = e + 1;
                 }
                 applyFilter.run();
@@ -816,7 +817,8 @@ public class LobbyFrame extends JFrame {
             String resp = OnlinePlay.post("join",
                     "{\"room_id\":" + rid + ","
                     + "\"user_id\":" + currentUser.id() + ","
-                    + "\"user_name\":\"" + displayName.replace("\"", "\\\"") + "\""
+                    + "\"user_name\":\"" + displayName.replace("\"", "\\\"") + "\","
+                    + "\"guest_mid\":\"" + currentUser.mid().replace("\"", "\\\"") + "\""
                     + pwdParam + "}");
             if (resp == null || !resp.contains("\"success\":true")) {
                 String err = OnlinePlay.extractStr(resp != null ? resp : "", "error");
@@ -861,7 +863,7 @@ public class LobbyFrame extends JFrame {
     // ───────── 观战 ─────────
 
     private record SpectateEntry(int id, String roomCode, String name, String hostName, String guestName,
-                                  int hostUid, int guestUid, int spectators) {
+                                  String hostMid, String guestMid, int spectators) {
         @Override public String toString() {
             String sp = spectators > 0 ? " [" + spectators + "人观战]" : "";
             return "[" + roomCode + "] " + hostName + " vs " + guestName + sp;
@@ -908,8 +910,8 @@ public class LobbyFrame extends JFrame {
             model.clear();
             for (SpectateEntry r : allRooms) {
                 if (filtering && !r.roomCode().toLowerCase().contains(q)
-                        && !String.valueOf(r.hostUid()).contains(q)
-                        && !String.valueOf(r.guestUid()).contains(q)) continue;
+                        && !r.hostMid().toLowerCase().contains(q)
+                        && !r.guestMid().toLowerCase().contains(q)) continue;
                 model.addElement(r);
             }
         };
@@ -946,10 +948,10 @@ public class LobbyFrame extends JFrame {
                     String rname = OnlinePlay.extractStr(obj, "name");
                     String host = OnlinePlay.extractStr(obj, "host_name");
                     String guest = OnlinePlay.extractStr(obj, "guest_name");
-                    int huid = OnlinePlay.extractInt(obj, "host_user_id");
-                    int guid = OnlinePlay.extractInt(obj, "guest_user_id");
+                    String hmid = OnlinePlay.extractStr(obj, "host_mid");
+                    String gmid = OnlinePlay.extractStr(obj, "guest_mid");
                     int sp = OnlinePlay.extractInt(obj, "spectators");
-                    allRooms.add(new SpectateEntry(id, code, rname, host, guest, huid, guid, sp));
+                    allRooms.add(new SpectateEntry(id, code, rname, host, guest, hmid, gmid, sp));
                     pos = end + 1;
                 }
                 applyFilter.run();
