@@ -6,6 +6,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 
+/**
+ * 在线对战实现类（功能二：在线对战/房间管理的核心）
+ * 实现 NetworkPlay 接口，通过 HTTP 轮询与 PHP 服务端通信
+ * 每 500ms 轮询一次服务器获取对手操作事件
+ * 支持断线重连：replay() 方法回放历史棋步恢复棋局状态
+ * C/S 架构：Java 客户端 + PHP+MySQL 服务端
+ */
 public class OnlinePlay implements NetworkPlay {
 
     private static final String API = "https://musetreehouse.com/api/game_room.php";

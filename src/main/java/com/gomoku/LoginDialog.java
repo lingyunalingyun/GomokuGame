@@ -4,6 +4,12 @@ import javax.swing.*;
 import java.awt.*;
 import java.util.concurrent.atomic.AtomicReference;
 
+/**
+ * 登录对话框（功能一：用户登录）
+ * 支持缪斯树屋论坛账号登录和游客模式
+ * 登录通过 AuthService 发送 HTTP POST 请求到服务器验证
+ * 支持记住密码（Base64 本地存储）和自动登录
+ */
 public class LoginDialog {
 
     public static UserInfo show(Component owner) {
@@ -120,7 +126,7 @@ public class LoginDialog {
         });
 
         guestBtn.addActionListener(e -> {
-            result.set(UserInfo.GUEST);
+            result.set(UserInfo.createGuest());
             dialog.dispose();
         });
 

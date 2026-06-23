@@ -7,6 +7,11 @@ import java.nio.file.Path;
 import java.util.Base64;
 import java.util.List;
 
+/**
+ * 凭据持久化存储类（功能一：用户登录的记住密码功能）
+ * 将用户名和 Base64 编码的密码保存到 ~/.gomoku/credentials 文件
+ * 使用 Java NIO Files API 进行文件读写操作
+ */
 public class CredentialStore {
 
     private static final Path FILE = Path.of(System.getProperty("user.home"), ".gomoku", "credentials");

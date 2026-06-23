@@ -14,11 +14,23 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+/**
+ * 主窗口类（继承 JFrame），整合全部五大功能的核心类
+ *
+ * 功能一：用户登录 —— 调用 LoginDialog 登录/游客，refreshUserInfo() 刷新用户面板
+ * 功能二：在线对战/房间管理 —— createOnlineRoom()/joinOnlineRoom() 在线房间，
+ *         createRoom()/joinRoom() 局域网房间，launchGame() 启动对局
+ * 功能三：战绩统计 —— loadLobbyStats() 从服务器获取积分/胜负/连胜并显示
+ * 功能四：历史对局记录查询 —— showHistory() 分页查询+筛选历史对局
+ * 功能五：用户信息管理 —— 大厅面板展示头像/等级/角色/战绩，登录/登出切换
+ *
+ * 采用单窗口设计：对局时用 setContentPane() 替换内容，结束后 returnToLobby() 恢复
+ */
 public class LobbyFrame extends JFrame {
 
     private static final String AVATAR_API = "https://musetreehouse.com/api/avatar.php?f=";
 
-    private UserInfo currentUser = UserInfo.GUEST;
+    private UserInfo currentUser = UserInfo.createGuest();
     private Image avatarImage;
     private JLabel avatarName;
     private JLabel infoLevel;
@@ -26,11 +38,15 @@ public class LobbyFrame extends JFrame {
     private JButton authButton;
     private JPanel avatarCircle;
     private JButton rejoinBtn;
+    private JLabel statScore, statRecord, statStreak;
+    private JPanel lobbyPanel;
+    private WindowAdapter gameWindowListener;
     private int activeRoomId;
     private int activeRoomPlayer;
 
     public LobbyFrame() {
         super("五子棋");
+        initDarkOptionPane();
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setResizable(false);
         buildUI();
@@ -53,6 +69,7 @@ public class LobbyFrame extends JFrame {
         body.add(buildUserPanel(), BorderLayout.EAST);
         root.add(body, BorderLayout.CENTER);
 
+        lobbyPanel = root;
         setContentPane(root);
     }
 
@@ -60,9 +77,24 @@ public class LobbyFrame extends JFrame {
         JPanel p = new JPanel();
         p.setOpaque(false);
         p.setBorder(BorderFactory.createEmptyBorder(22, 0, 10, 0));
-        JLabel t = new JLabel("五 子 棋");
-        t.setFont(new Font("Microsoft YaHei", Font.BOLD, 30));
-        t.setForeground(new Color(230, 230, 230));
+        JLabel t = new JLabel("五 子 棋") {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setFont(getFont());
+                FontMetrics fm = g2.getFontMetrics();
+                int x = (getWidth() - fm.stringWidth(getText())) / 2;
+                int y = fm.getAscent();
+                g2.setColor(new Color(100, 160, 255, 40));
+                g2.drawString(getText(), x, y + 2);
+                g2.setColor(getForeground());
+                g2.drawString(getText(), x, y);
+            }
+        };
+        t.setFont(new Font("Microsoft YaHei", Font.BOLD, 32));
+        t.setForeground(new Color(240, 240, 245));
+        t.setPreferredSize(new Dimension(200, 40));
         p.add(t);
         return p;
     }
@@ -83,11 +115,10 @@ public class LobbyFrame extends JFrame {
 
         rejoinBtn = modeButton("⚔ 回到对局", "你有一场正在进行的在线对局");
         rejoinBtn.setBackground(new Color(50, 45, 20));
-        rejoinBtn.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(180, 140, 40), 1, true),
-                BorderFactory.createEmptyBorder(8, 14, 8, 14)));
         rejoinBtn.setVisible(false);
         rejoinBtn.addActionListener(e -> rejoinOnlineRoom());
+        for (java.awt.event.MouseListener ml : rejoinBtn.getMouseListeners())
+            if (ml.getClass().isAnonymousClass()) rejoinBtn.removeMouseListener(ml);
         rejoinBtn.addMouseListener(new MouseAdapter() {
             @Override public void mouseEntered(MouseEvent e) { rejoinBtn.setBackground(new Color(65, 58, 28)); }
             @Override public void mouseExited(MouseEvent e) { rejoinBtn.setBackground(new Color(50, 45, 20)); }
@@ -116,14 +147,30 @@ public class LobbyFrame extends JFrame {
     private JButton modeButton(String title, String desc) {
         JButton btn = new JButton(
                 "<html><b style='font-size:11px'>" + title
-                        + "</b><br><span style='font-size:9px;color:#888'>" + desc + "</span></html>");
+                        + "</b><br><span style='font-size:9px;color:#999'>" + desc + "</span></html>") {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(getBackground());
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 12, 12);
+                super.paintComponent(g);
+            }
+            @Override
+            protected void paintBorder(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(new Color(60, 68, 85));
+                g2.setStroke(new BasicStroke(1.2f));
+                g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 12, 12);
+            }
+        };
         btn.setFont(new Font("Microsoft YaHei", Font.PLAIN, 13));
         btn.setHorizontalAlignment(SwingConstants.LEFT);
         btn.setBackground(new Color(35, 40, 52));
         btn.setForeground(new Color(220, 220, 220));
-        btn.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(55, 60, 75), 1, true),
-                BorderFactory.createEmptyBorder(8, 14, 8, 14)));
+        btn.setContentAreaFilled(false);
+        btn.setBorder(BorderFactory.createEmptyBorder(8, 16, 8, 16));
         btn.setFocusPainted(false);
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         btn.setMaximumSize(new Dimension(320, 54));
@@ -131,7 +178,7 @@ public class LobbyFrame extends JFrame {
         btn.setAlignmentX(Component.LEFT_ALIGNMENT);
         btn.addMouseListener(new MouseAdapter() {
             final Color normal = new Color(35, 40, 52);
-            final Color hover = new Color(50, 58, 72);
+            final Color hover = new Color(48, 56, 72);
             @Override public void mouseEntered(MouseEvent e) { btn.setBackground(hover); }
             @Override public void mouseExited(MouseEvent e) { btn.setBackground(normal); }
         });
@@ -154,7 +201,7 @@ public class LobbyFrame extends JFrame {
         header.setForeground(new Color(180, 180, 180));
         header.setAlignmentX(Component.LEFT_ALIGNMENT);
         panel.add(header);
-        panel.add(Box.createVerticalStrut(18));
+        panel.add(Box.createVerticalStrut(10));
 
         avatarCircle = new JPanel() {
             @Override
@@ -162,10 +209,10 @@ public class LobbyFrame extends JFrame {
                 super.paintComponent(g);
                 Graphics2D g2 = (Graphics2D) g;
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                Shape circle = new Ellipse2D.Float(0, 0, 60, 60);
+                Shape circle = new Ellipse2D.Float(0, 0, 48, 48);
                 if (avatarImage != null) {
                     g2.setClip(circle);
-                    g2.drawImage(avatarImage, 0, 0, 60, 60, null);
+                    g2.drawImage(avatarImage, 0, 0, 48, 48, null);
                     g2.setClip(null);
                     g2.setColor(new Color(60, 65, 80));
                     g2.setStroke(new BasicStroke(2));
@@ -174,47 +221,73 @@ public class LobbyFrame extends JFrame {
                     g2.setColor(avatarColor());
                     g2.fill(circle);
                     g2.setColor(Color.WHITE);
-                    g2.setFont(new Font("Microsoft YaHei", Font.BOLD, 24));
+                    g2.setFont(new Font("Microsoft YaHei", Font.BOLD, 20));
                     String ch = currentUser.isGuest() ? "?" : currentUser.username().substring(0, 1).toUpperCase();
                     FontMetrics fm = g2.getFontMetrics();
-                    g2.drawString(ch, (60 - fm.stringWidth(ch)) / 2, (60 - fm.getHeight()) / 2 + fm.getAscent());
+                    g2.drawString(ch, (48 - fm.stringWidth(ch)) / 2, (48 - fm.getHeight()) / 2 + fm.getAscent());
                 }
             }
         };
         avatarCircle.setOpaque(false);
-        avatarCircle.setPreferredSize(new Dimension(60, 60));
-        avatarCircle.setMaximumSize(new Dimension(60, 60));
+        avatarCircle.setPreferredSize(new Dimension(48, 48));
+        avatarCircle.setMaximumSize(new Dimension(48, 48));
         avatarCircle.setAlignmentX(Component.LEFT_ALIGNMENT);
         panel.add(avatarCircle);
-        panel.add(Box.createVerticalStrut(12));
+        panel.add(Box.createVerticalStrut(8));
 
         avatarName = new JLabel();
-        avatarName.setFont(new Font("Microsoft YaHei", Font.BOLD, 16));
+        avatarName.setFont(new Font("Microsoft YaHei", Font.BOLD, 15));
         avatarName.setForeground(new Color(230, 230, 230));
         avatarName.setAlignmentX(Component.LEFT_ALIGNMENT);
         panel.add(avatarName);
-        panel.add(Box.createVerticalStrut(4));
+        panel.add(Box.createVerticalStrut(2));
 
         infoLevel = new JLabel();
-        infoLevel.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
+        infoLevel.setFont(new Font("Microsoft YaHei", Font.PLAIN, 11));
         infoLevel.setForeground(new Color(140, 140, 140));
         infoLevel.setAlignmentX(Component.LEFT_ALIGNMENT);
         panel.add(infoLevel);
 
         infoRole = new JLabel();
-        infoRole.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
+        infoRole.setFont(new Font("Microsoft YaHei", Font.PLAIN, 11));
         infoRole.setForeground(new Color(140, 140, 140));
         infoRole.setAlignmentX(Component.LEFT_ALIGNMENT);
         panel.add(infoRole);
 
+        panel.add(Box.createVerticalStrut(10));
+
+        statScore = new JLabel();
+        statScore.setFont(new Font("Microsoft YaHei", Font.BOLD, 12));
+        statScore.setForeground(new Color(100, 200, 255));
+        statScore.setAlignmentX(Component.LEFT_ALIGNMENT);
+        panel.add(statScore);
+        panel.add(Box.createVerticalStrut(3));
+
+        statRecord = new JLabel();
+        statRecord.setFont(new Font("Microsoft YaHei", Font.PLAIN, 11));
+        statRecord.setForeground(new Color(160, 160, 160));
+        statRecord.setAlignmentX(Component.LEFT_ALIGNMENT);
+        panel.add(statRecord);
+        panel.add(Box.createVerticalStrut(3));
+
+        statStreak = new JLabel();
+        statStreak.setFont(new Font("Microsoft YaHei", Font.PLAIN, 11));
+        statStreak.setForeground(new Color(255, 180, 50));
+        statStreak.setAlignmentX(Component.LEFT_ALIGNMENT);
+        panel.add(statStreak);
+
         panel.add(Box.createVerticalGlue());
 
-        authButton = new JButton();
-        authButton.setFont(new Font("Microsoft YaHei", Font.PLAIN, 13));
-        authButton.setFocusPainted(false);
-        authButton.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        JButton historyBtn = styledButton("历史对局", new Color(180, 200, 220), new Color(40, 48, 62));
+        historyBtn.setAlignmentX(Component.LEFT_ALIGNMENT);
+        historyBtn.setMaximumSize(new Dimension(130, 30));
+        historyBtn.addActionListener(e -> showHistory());
+        panel.add(historyBtn);
+        panel.add(Box.createVerticalStrut(6));
+
+        authButton = styledButton("", new Color(180, 200, 220), new Color(40, 48, 62));
         authButton.setAlignmentX(Component.LEFT_ALIGNMENT);
-        authButton.setMaximumSize(new Dimension(120, 32));
+        authButton.setMaximumSize(new Dimension(130, 30));
         authButton.addActionListener(e -> onAuth());
         panel.add(authButton);
 
@@ -234,10 +307,13 @@ public class LobbyFrame extends JFrame {
     private void refreshUserInfo() {
         if (currentUser.isGuest()) {
             avatarImage = null;
-            avatarName.setText("游客");
+            avatarName.setText(currentUser.username());
             infoLevel.setText("未登录");
             infoRole.setText(" ");
             authButton.setText("登录");
+            statScore.setText("");
+            statRecord.setText("");
+            statStreak.setText("");
         } else {
             avatarName.setText(currentUser.username());
             infoLevel.setText("Lv." + currentUser.level());
@@ -249,8 +325,25 @@ public class LobbyFrame extends JFrame {
             });
             authButton.setText("注销");
             loadAvatar(currentUser.avatar());
+            loadLobbyStats();
         }
         avatarCircle.repaint();
+    }
+
+    private void loadLobbyStats() {
+        new Thread(() -> {
+            String r = OnlinePlay.get("stats&user_id=" + currentUser.id());
+            if (r == null || !r.contains("\"success\":true")) return;
+            int total = OnlinePlay.extractInt(r, "total_games");
+            int wins = OnlinePlay.extractInt(r, "wins");
+            int streak = OnlinePlay.extractInt(r, "max_streak");
+            int score = OnlinePlay.extractInt(r, "total_score");
+            SwingUtilities.invokeLater(() -> {
+                statScore.setText("★ " + score + " 分");
+                statRecord.setText(wins + "胜 / " + total + "场");
+                statStreak.setText(streak > 0 ? "🔥 最大连胜 " + streak : " ");
+            });
+        }, "LobbyStats").start();
     }
 
     private void loadAvatar(String avatarFile) {
@@ -282,7 +375,7 @@ public class LobbyFrame extends JFrame {
             UserInfo u = LoginDialog.show(this);
             if (u != null && !u.isGuest()) { currentUser = u; refreshUserInfo(); checkActiveRoom(); }
         } else {
-            currentUser = UserInfo.GUEST;
+            currentUser = UserInfo.createGuest();
             CredentialStore.clear();
             refreshUserInfo();
             rejoinBtn.setVisible(false);
@@ -312,6 +405,117 @@ public class LobbyFrame extends JFrame {
         launchGame(null, net, localPlayer, "在线对战（你执" + side + "）", game, opName);
     }
 
+    // ───────── 历史对局 ─────────
+
+    private void showHistory() {
+        if (currentUser.isGuest()) {
+            JOptionPane.showMessageDialog(this, "请先登录");
+            return;
+        }
+
+        JDialog d = new JDialog(this, "历史对局", true);
+        d.setLayout(new BorderLayout());
+        d.getContentPane().setBackground(new Color(30, 34, 42));
+
+        Color dBg = new Color(30, 34, 42);
+        Color dFg = new Color(200, 205, 215);
+        Color dDim = new Color(140, 145, 155);
+
+        String[] columns = {"对手", "模式", "结果", "积分", "用时", "步数", "时间"};
+        javax.swing.table.DefaultTableModel tableModel = new javax.swing.table.DefaultTableModel(columns, 0) {
+            @Override public boolean isCellEditable(int r, int c) { return false; }
+        };
+        JTable table = new JTable(tableModel);
+        table.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
+        table.setRowHeight(26);
+        table.setBackground(new Color(38, 42, 52));
+        table.setForeground(dFg);
+        table.setGridColor(new Color(55, 60, 72));
+        table.setSelectionBackground(new Color(55, 70, 95));
+        table.setSelectionForeground(Color.WHITE);
+        table.getTableHeader().setFont(new Font("Microsoft YaHei", Font.BOLD, 12));
+        table.getTableHeader().setBackground(new Color(35, 40, 50));
+        table.getTableHeader().setForeground(dDim);
+
+        JComboBox<String> resultFilter = new JComboBox<>(new String[]{"全部", "胜利", "失败", "平局"});
+        resultFilter.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
+        JComboBox<String> modeFilter = new JComboBox<>(new String[]{"全部", "在线", "人机", "局域网"});
+        modeFilter.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
+
+        JLabel pageLabel = new JLabel("第 1 页", SwingConstants.CENTER);
+        pageLabel.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
+        pageLabel.setForeground(dDim);
+        JButton prevBtn = styledButton("上一页", dFg, new Color(40, 48, 62));
+        JButton nextBtn = styledButton("下一页", dFg, new Color(40, 48, 62));
+        int[] currentPage = {1};
+        int[] totalPages = {1};
+
+        Runnable loadData = () -> {
+            String rf = switch (resultFilter.getSelectedIndex()) { case 1 -> "&result=win"; case 2 -> "&result=loss"; case 3 -> "&result=draw"; default -> ""; };
+            String mf = switch (modeFilter.getSelectedIndex()) { case 1 -> "&mode=online"; case 2 -> "&mode=ai"; case 3 -> "&mode=lan"; default -> ""; };
+            String resp = OnlinePlay.get("history&user_id=" + currentUser.id() + "&page=" + currentPage[0] + rf + mf);
+            if (resp == null || !resp.contains("\"success\":true")) return;
+            totalPages[0] = Math.max(1, OnlinePlay.extractInt(resp, "pages"));
+            SwingUtilities.invokeLater(() -> {
+                tableModel.setRowCount(0);
+                pageLabel.setText("第 " + currentPage[0] + "/" + totalPages[0] + " 页");
+                prevBtn.setEnabled(currentPage[0] > 1);
+                nextBtn.setEnabled(currentPage[0] < totalPages[0]);
+                int pos = 0;
+                while (true) {
+                    int s = resp.indexOf("{\"opponent\":", pos);
+                    if (s < 0) break;
+                    int e = resp.indexOf('}', s);
+                    if (e < 0) break;
+                    String obj = resp.substring(s, e + 1);
+                    String opponent = OnlinePlay.extractStr(obj, "opponent");
+                    String mode = switch (OnlinePlay.extractStr(obj, "mode")) { case "online" -> "在线"; case "ai" -> "人机"; case "lan" -> "局域网"; default -> "本地"; };
+                    String result = switch (OnlinePlay.extractStr(obj, "result")) { case "win" -> "胜利"; case "loss" -> "失败"; default -> "平局"; };
+                    int score = OnlinePlay.extractInt(obj, "score");
+                    int duration = OnlinePlay.extractInt(obj, "duration");
+                    int moves = OnlinePlay.extractInt(obj, "moves");
+                    String time = OnlinePlay.extractStr(obj, "time");
+                    tableModel.addRow(new Object[]{opponent, mode, result, (score > 0 ? "+" : "") + score, fmtTime(duration), moves, time});
+                    pos = e + 1;
+                }
+            });
+        };
+
+        resultFilter.addActionListener(e -> { currentPage[0] = 1; new Thread(loadData, "HistLoad").start(); });
+        modeFilter.addActionListener(e -> { currentPage[0] = 1; new Thread(loadData, "HistLoad").start(); });
+        prevBtn.addActionListener(e -> { if (currentPage[0] > 1) { currentPage[0]--; new Thread(loadData, "HistLoad").start(); } });
+        nextBtn.addActionListener(e -> { if (currentPage[0] < totalPages[0]) { currentPage[0]++; new Thread(loadData, "HistLoad").start(); } });
+
+        JPanel filterPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        filterPanel.setBackground(dBg);
+        JLabel lbR = new JLabel("结果："); lbR.setForeground(dDim);
+        JLabel lbM = new JLabel("模式："); lbM.setForeground(dDim);
+        filterPanel.add(lbR);
+        filterPanel.add(resultFilter);
+        filterPanel.add(Box.createHorizontalStrut(10));
+        filterPanel.add(lbM);
+        filterPanel.add(modeFilter);
+
+        JPanel pagePanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        pagePanel.setBackground(dBg);
+        pagePanel.add(prevBtn);
+        pagePanel.add(pageLabel);
+        pagePanel.add(nextBtn);
+
+        JScrollPane sp = new JScrollPane(table);
+        sp.getViewport().setBackground(new Color(38, 42, 52));
+        sp.setBorder(BorderFactory.createEmptyBorder());
+
+        d.add(filterPanel, BorderLayout.NORTH);
+        d.add(sp, BorderLayout.CENTER);
+        d.add(pagePanel, BorderLayout.SOUTH);
+        d.setSize(620, 400);
+        d.setLocationRelativeTo(this);
+
+        new Thread(loadData, "HistLoad").start();
+        d.setVisible(true);
+    }
+
     // ───────── 模式处理 ─────────
 
     private void onMode(int m) {
@@ -327,23 +531,22 @@ public class LobbyFrame extends JFrame {
     // ───────── 在线对战 ─────────
 
     private void startOnline() {
-        String[] sub = {"创建房间", "加入房间"};
-        int c = JOptionPane.showOptionDialog(this, "在线对战", "五子棋",
-                JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, sub, sub[0]);
+        int c = showChoiceDialog("在线对战", "创建房间", "加入房间");
         if (c == 0) createOnlineRoom();
         else if (c == 1) joinOnlineRoom();
     }
 
     private void createOnlineRoom() {
-        String def = currentUser.isGuest() ? "游客的房间" : currentUser.username() + "的房间";
+        String def = currentUser.username() + "的房间";
         String name = JOptionPane.showInputDialog(this, "房间名称：", def);
         if (name == null || name.isBlank()) return;
 
-        String displayName = currentUser.isGuest() ? "游客" : currentUser.displayName();
+        String displayName = currentUser.displayName();
         String resp = OnlinePlay.post("create",
                 "{\"name\":\"" + name.trim().replace("\"", "\\\"") + "\","
                 + "\"user_id\":" + currentUser.id() + ","
-                + "\"user_name\":\"" + displayName.replace("\"", "\\\"") + "\"}");
+                + "\"user_name\":\"" + displayName.replace("\"", "\\\"") + "\","
+                + "\"host_avatar\":\"" + currentUser.avatar().replace("\"", "\\\"") + "\"}");
         if (resp == null || !resp.contains("\"success\":true")) {
             JOptionPane.showMessageDialog(this, "创建房间失败");
             return;
@@ -354,8 +557,7 @@ public class LobbyFrame extends JFrame {
         JLabel lb = new JLabel("<html><center>房间已创建，等待对手加入...<br>房间号: " + roomId + "</center></html>", SwingConstants.CENTER);
         lb.setFont(new Font("Microsoft YaHei", Font.PLAIN, 14));
         lb.setBorder(BorderFactory.createEmptyBorder(15, 20, 5, 20));
-        JButton cancel = new JButton("取消");
-        cancel.setFont(new Font("Microsoft YaHei", Font.PLAIN, 13));
+        JButton cancel = styledButton("取消", new Color(200, 205, 215), new Color(50, 40, 40));
         JPanel bp = new JPanel();
         bp.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
         bp.add(cancel);
@@ -365,6 +567,7 @@ public class LobbyFrame extends JFrame {
         d.setSize(300, 150);
         d.setLocationRelativeTo(this);
         d.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+        darkDialog(d);
 
         AtomicBoolean ok = new AtomicBoolean();
         AtomicBoolean cancelled = new AtomicBoolean();
@@ -396,13 +599,83 @@ public class LobbyFrame extends JFrame {
         }
     }
 
+    private record RoomEntry(int id, String name, String hostName, String hostAvatar) {
+        @Override public String toString() { return name + "  —  " + hostName; }
+    }
+
+    private final java.util.Map<String, Image> avatarCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private void loadRoomAvatar(String avatarFile, JList<?> list) {
+        if (avatarFile == null || avatarFile.isEmpty()) avatarFile = "default.png";
+        if (avatarCache.containsKey(avatarFile)) return;
+        String key = avatarFile;
+        String url = AVATAR_API + avatarFile;
+        new Thread(() -> {
+            try {
+                BufferedImage img = ImageIO.read(new URI(url).toURL());
+                if (img != null) {
+                    avatarCache.put(key, img);
+                    SwingUtilities.invokeLater(list::repaint);
+                }
+            } catch (Exception ignored) {}
+        }, "RoomAvatar").start();
+    }
+
     private void joinOnlineRoom() {
         JDialog d = new JDialog(this, "在线房间", true);
-        DefaultListModel<String> model = new DefaultListModel<>();
-        java.util.List<int[]> roomIds = new java.util.ArrayList<>();
-        JList<String> list = new JList<>(model);
-        list.setFont(new Font("Microsoft YaHei", Font.PLAIN, 14));
+        DefaultListModel<RoomEntry> model = new DefaultListModel<>();
+        JList<RoomEntry> list = new JList<>(model);
+        list.setFixedCellHeight(50);
         list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        list.setCellRenderer((jlist, value, index, isSelected, cellHasFocus) -> {
+            JPanel cell = new JPanel(new BorderLayout(10, 0));
+            cell.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+            Color bg = isSelected ? new Color(55, 70, 90) : new Color(38, 42, 52);
+            cell.setBackground(bg);
+
+            String avKey = (value.hostAvatar() == null || value.hostAvatar().isEmpty()) ? "default.png" : value.hostAvatar();
+            Image avImg = avatarCache.get(avKey);
+            loadRoomAvatar(avKey, list);
+            JPanel avPanel = new JPanel() {
+                @Override protected void paintComponent(Graphics g) {
+                    super.paintComponent(g);
+                    Graphics2D g2 = (Graphics2D) g;
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    int s = Math.min(getWidth(), getHeight());
+                    g2.setClip(new Ellipse2D.Float(0, 0, s, s));
+                    if (avImg != null) {
+                        g2.drawImage(avImg, 0, 0, s, s, null);
+                    } else {
+                        int hash = value.hostName().hashCode();
+                        g2.setColor(new Color(60 + Math.abs(hash % 80), 60 + Math.abs((hash / 80) % 80), 80 + Math.abs((hash / 6400) % 80)));
+                        g2.fillOval(0, 0, s, s);
+                        g2.setColor(Color.WHITE);
+                        g2.setFont(new Font("Microsoft YaHei", Font.BOLD, 18));
+                        String ch = value.hostName().isEmpty() ? "?" : value.hostName().substring(0, 1).toUpperCase();
+                        FontMetrics fm = g2.getFontMetrics();
+                        g2.drawString(ch, (s - fm.stringWidth(ch)) / 2, (s + fm.getAscent() - fm.getDescent()) / 2);
+                    }
+                }
+            };
+            avPanel.setPreferredSize(new Dimension(40, 40));
+            avPanel.setOpaque(false);
+
+            JPanel text = new JPanel(new GridLayout(2, 1));
+            text.setOpaque(false);
+            JLabel nameLabel = new JLabel(value.name());
+            nameLabel.setFont(new Font("Microsoft YaHei", Font.BOLD, 13));
+            nameLabel.setForeground(new Color(220, 225, 235));
+            JLabel hostLabel = new JLabel(value.hostName() + "  #" + value.id());
+            hostLabel.setFont(new Font("Microsoft YaHei", Font.PLAIN, 11));
+            hostLabel.setForeground(new Color(140, 145, 155));
+            text.add(nameLabel);
+            text.add(hostLabel);
+
+            cell.add(avPanel, BorderLayout.WEST);
+            cell.add(text, BorderLayout.CENTER);
+            return cell;
+        });
+
         AtomicReference<Integer> selectedRoom = new AtomicReference<>();
         AtomicReference<String> selectedHost = new AtomicReference<>();
         AtomicBoolean alive = new AtomicBoolean(true);
@@ -413,7 +686,6 @@ public class LobbyFrame extends JFrame {
             SwingUtilities.invokeLater(() -> {
                 int sel = list.getSelectedIndex();
                 model.clear();
-                roomIds.clear();
                 int pos = 0;
                 while (true) {
                     int s = resp.indexOf("{\"id\":", pos);
@@ -424,8 +696,8 @@ public class LobbyFrame extends JFrame {
                     int id = OnlinePlay.extractInt(obj, "id");
                     String rname = OnlinePlay.extractStr(obj, "name");
                     String host = OnlinePlay.extractStr(obj, "host_name");
-                    model.addElement(rname + "  —  " + host + "  #" + id);
-                    roomIds.add(new int[]{id});
+                    String avatar = OnlinePlay.extractStr(obj, "host_avatar");
+                    model.addElement(new RoomEntry(id, rname, host, avatar));
                     pos = e + 1;
                 }
                 if (sel >= 0 && sel < model.size()) list.setSelectedIndex(sel);
@@ -444,13 +716,12 @@ public class LobbyFrame extends JFrame {
         hint.setForeground(new Color(100, 100, 100));
         hint.setBorder(BorderFactory.createEmptyBorder(8, 5, 5, 5));
 
-        JButton joinBtn = new JButton("加入");
-        joinBtn.setFont(new Font("Microsoft YaHei", Font.PLAIN, 13));
+        JButton joinBtn = styledButton("加入", new Color(200, 220, 200), new Color(35, 50, 40));
         joinBtn.addActionListener(e -> {
-            int idx = list.getSelectedIndex();
-            if (idx < 0 || idx >= roomIds.size()) { JOptionPane.showMessageDialog(d, "请先选择一个房间"); return; }
-            int rid = roomIds.get(idx)[0];
-            String displayName = currentUser.isGuest() ? "游客" : currentUser.displayName();
+            RoomEntry entry = list.getSelectedValue();
+            if (entry == null) { JOptionPane.showMessageDialog(d, "请先选择一个房间"); return; }
+            int rid = entry.id();
+            String displayName = currentUser.displayName();
             String resp = OnlinePlay.post("join",
                     "{\"room_id\":" + rid + ","
                     + "\"user_id\":" + currentUser.id() + ","
@@ -470,8 +741,7 @@ public class LobbyFrame extends JFrame {
             @Override public void mouseClicked(MouseEvent e) { if (e.getClickCount() == 2 && list.getSelectedValue() != null) joinBtn.doClick(); }
         });
 
-        JButton cancelBtn = new JButton("取消");
-        cancelBtn.setFont(new Font("Microsoft YaHei", Font.PLAIN, 13));
+        JButton cancelBtn = styledButton("取消", new Color(200, 205, 215), new Color(50, 40, 40));
         cancelBtn.addActionListener(e -> { alive.set(false); d.dispose(); });
         d.addWindowListener(new WindowAdapter() { @Override public void windowClosing(WindowEvent e) { alive.set(false); } });
 
@@ -485,6 +755,7 @@ public class LobbyFrame extends JFrame {
         d.add(bp, BorderLayout.SOUTH);
         d.setSize(380, 320);
         d.setLocationRelativeTo(this);
+        darkDialog(d);
         d.setVisible(true);
 
         Integer rid = selectedRoom.get();
@@ -496,19 +767,17 @@ public class LobbyFrame extends JFrame {
     // ───────── 局域网对战 ─────────
 
     private void startLan() {
-        String[] sub = {"创建房间", "加入房间"};
-        int c = JOptionPane.showOptionDialog(this, "局域网对战", "五子棋",
-                JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, sub, sub[0]);
+        int c = showChoiceDialog("局域网对战", "创建房间", "加入房间");
         if (c == 0) createRoom();
         else if (c == 1) joinRoom();
     }
 
     private void createRoom() {
-        String def = currentUser.isGuest() ? System.getProperty("user.name") + "的房间" : currentUser.username() + "的房间";
+        String def = currentUser.username() + "的房间";
         String name = JOptionPane.showInputDialog(this, "房间名称：", def);
         if (name == null || name.isBlank()) return;
 
-        String display = currentUser.isGuest() ? "游客" : currentUser.displayName();
+        String display = currentUser.displayName();
         LanHost host;
         try { host = new LanHost(name.trim(), display); }
         catch (IOException e) { JOptionPane.showMessageDialog(this, "创建失败：" + e.getMessage()); return; }
@@ -519,8 +788,7 @@ public class LobbyFrame extends JFrame {
         JLabel lb = new JLabel("<html><center>等待对手加入...<br>" + host.getLocalIp() + " : " + host.getPort() + "</center></html>", SwingConstants.CENTER);
         lb.setFont(new Font("Microsoft YaHei", Font.PLAIN, 14));
         lb.setBorder(BorderFactory.createEmptyBorder(15, 20, 5, 20));
-        JButton cancel = new JButton("取消");
-        cancel.setFont(new Font("Microsoft YaHei", Font.PLAIN, 13));
+        JButton cancel = styledButton("取消", new Color(200, 205, 215), new Color(50, 40, 40));
         JPanel bp = new JPanel();
         bp.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
         bp.add(cancel);
@@ -530,6 +798,7 @@ public class LobbyFrame extends JFrame {
         d.setSize(300, 150);
         d.setLocationRelativeTo(this);
         d.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+        darkDialog(d);
 
         AtomicBoolean ok = new AtomicBoolean();
         Runnable doCancel = () -> { host.cancelWait(); d.dispose(); };
@@ -564,8 +833,7 @@ public class LobbyFrame extends JFrame {
         hint.setForeground(new Color(100, 100, 100));
         hint.setBorder(BorderFactory.createEmptyBorder(8, 5, 5, 5));
 
-        JButton joinBtn = new JButton("加入");
-        joinBtn.setFont(new Font("Microsoft YaHei", Font.PLAIN, 13));
+        JButton joinBtn = styledButton("加入", new Color(200, 220, 200), new Color(35, 50, 40));
         joinBtn.addActionListener(e -> {
             LanGuest.RoomInfo r = list.getSelectedValue();
             if (r == null) { JOptionPane.showMessageDialog(d, "请先选择一个房间"); return; }
@@ -577,8 +845,7 @@ public class LobbyFrame extends JFrame {
             @Override public void mouseClicked(MouseEvent e) { if (e.getClickCount() == 2 && list.getSelectedValue() != null) joinBtn.doClick(); }
         });
 
-        JButton cancelBtn = new JButton("取消");
-        cancelBtn.setFont(new Font("Microsoft YaHei", Font.PLAIN, 13));
+        JButton cancelBtn = styledButton("取消", new Color(200, 205, 215), new Color(50, 40, 40));
         cancelBtn.addActionListener(e -> { if (ds != null) ds.close(); d.dispose(); });
         d.addWindowListener(new WindowAdapter() { @Override public void windowClosing(WindowEvent e) { if (ds != null) ds.close(); } });
 
@@ -592,6 +859,7 @@ public class LobbyFrame extends JFrame {
         d.add(bp, BorderLayout.SOUTH);
         d.setSize(360, 300);
         d.setLocationRelativeTo(this);
+        darkDialog(d);
         d.setVisible(true);
 
         LanGuest.RoomInfo room = sel.get();
@@ -614,13 +882,9 @@ public class LobbyFrame extends JFrame {
 
     private void launchGame(Robot robot, NetworkPlay net, int localPlayer, String modeText,
                             GameLogic existingGame, String opponentName) {
-        setVisible(false);
-
         GameLogic game = existingGame != null ? existingGame : new GameLogic();
         String title = currentUser.isGuest() ? "五子棋" : "五子棋 - " + currentUser.displayName();
-        JFrame frame = new JFrame(title);
-        frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-        frame.setResizable(false);
+        setTitle(title);
 
         JLabel statusLabel = new JLabel("", SwingConstants.CENTER);
         statusLabel.setFont(new Font("Microsoft YaHei", Font.BOLD, 18));
@@ -631,12 +895,12 @@ public class LobbyFrame extends JFrame {
         if (net != null) boardPanel.setNetworkPlay(net, localPlayer);
 
         // ── 玩家数据 ──
-        String userName = currentUser.isGuest() ? "游客" : currentUser.username();
+        String userName = currentUser.username();
         String[] names = new String[2];
         Image[] avatars = new Image[2];
         int[] countdown = {30, 30};
         int[] totalTime = {0, 0};
-        int[][] stats = new int[2][5]; // {total, wins, losses, streak, score}
+        int[][] stats = new int[2][5];
         int[] autoMoves = {0, 0};
         int[] lastTurn = {GameLogic.BLACK};
         boolean[] resultReported = {false};
@@ -728,6 +992,14 @@ public class LobbyFrame extends JFrame {
             updateTotal.run();
         };
 
+        // ── 返回大厅 ──
+        Runnable doReturn = () -> {
+            clock.stop();
+            if (net instanceof OnlinePlay op && !game.isGameOver()) op.disconnect();
+            else if (net != null) net.close();
+            returnToLobby();
+        };
+
         // ── 状态回调 ──
         boardPanel.setOnChange(() -> {
             int cur = game.getCurrentPlayer();
@@ -755,11 +1027,19 @@ public class LobbyFrame extends JFrame {
                     if (myIdx >= 0) stats[myIdx][4] += score;
 
                     int scoreF = score;
+                    int durationF = totalTime[0] + totalTime[1];
+                    int movesF = game.getMoveCount();
+                    String opNameF = myIdx == 0 ? names[1] : names[0];
+                    String modeF = net != null ? "online" : robot != null ? "ai" : "local";
                     new Thread(() -> OnlinePlay.post("report_result",
                             "{\"user_id\":" + currentUser.id()
                             + ",\"username\":\"" + currentUser.username().replace("\"","\\\"") + "\""
                             + ",\"result\":\"" + result + "\""
-                            + ",\"score\":" + scoreF + "}"), "Report").start();
+                            + ",\"score\":" + scoreF
+                            + ",\"opponent_name\":\"" + (opNameF != null ? opNameF.replace("\"","\\\"") : "") + "\""
+                            + ",\"mode\":\"" + modeF + "\""
+                            + ",\"duration\":" + durationF
+                            + ",\"total_moves\":" + movesF + "}"), "Report").start();
 
                     if (base > 0) {
                         String dlgTitle = "win".equals(result) ? "胜利" : "平局";
@@ -789,7 +1069,7 @@ public class LobbyFrame extends JFrame {
         // ── 网络回调 ──
         if (net != null) {
             int opIdx = localPlayer == GameLogic.BLACK ? 1 : 0;
-            String myName = currentUser.isGuest() ? "游客" : currentUser.displayName();
+            String myName = currentUser.displayName();
             net.sendName(myName);
             net.setCallback(new NetworkPlay.Callback() {
                 @Override public void onRemoteMove(int r, int c) { boardPanel.receiveRemoteMove(r, c); }
@@ -810,11 +1090,11 @@ public class LobbyFrame extends JFrame {
                         clock.stop();
                         boardPanel.repaint();
                         boardPanel.updateStatusPublic();
-                        JOptionPane.showMessageDialog(frame, "对方投降，你赢了！", "对局结束", JOptionPane.INFORMATION_MESSAGE);
+                        JOptionPane.showMessageDialog(LobbyFrame.this, "对方投降，你赢了！", "对局结束", JOptionPane.INFORMATION_MESSAGE);
                     });
                 }
                 @Override public void onDisconnect(String reason) {
-                    SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(frame, reason, "连接断开", JOptionPane.WARNING_MESSAGE));
+                    SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(LobbyFrame.this, reason, "连接断开", JOptionPane.WARNING_MESSAGE));
                 }
             });
             net.startListening();
@@ -825,13 +1105,11 @@ public class LobbyFrame extends JFrame {
 
         JButton actionBtn;
         if (isOnline) {
-            actionBtn = new JButton("投降");
+            actionBtn = styledButton("投降", new Color(230, 80, 80), new Color(60, 30, 30));
             actionBtn.setFont(new Font("Microsoft YaHei", Font.BOLD, 14));
-            actionBtn.setForeground(new Color(200, 60, 60));
-            actionBtn.setFocusPainted(false);
             actionBtn.addActionListener(e -> {
                 if (game.isGameOver()) return;
-                int confirm = JOptionPane.showConfirmDialog(frame, "确定要投降吗？", "投降", JOptionPane.YES_NO_OPTION);
+                int confirm = JOptionPane.showConfirmDialog(LobbyFrame.this, "确定要投降吗？", "投降", JOptionPane.YES_NO_OPTION);
                 if (confirm != JOptionPane.YES_OPTION) return;
                 game.surrender(localPlayer);
                 clock.stop();
@@ -840,20 +1118,12 @@ public class LobbyFrame extends JFrame {
                 boardPanel.updateStatusPublic();
             });
         } else {
-            actionBtn = new JButton("重新开始");
-            actionBtn.setFont(new Font("Microsoft YaHei", Font.PLAIN, 14));
-            actionBtn.setFocusPainted(false);
+            actionBtn = styledButton("重新开始", new Color(200, 220, 200), new Color(35, 50, 40));
             actionBtn.addActionListener(e -> { boardPanel.resetGame(); resetTimers.run(); });
         }
 
-        JButton backBtn = new JButton("返回大厅");
-        backBtn.setFont(new Font("Microsoft YaHei", Font.PLAIN, 14));
-        backBtn.setFocusPainted(false);
-        backBtn.addActionListener(e -> {
-            if (net instanceof OnlinePlay op && !game.isGameOver()) op.disconnect();
-            else if (net != null) net.close();
-            frame.dispose();
-        });
+        JButton backBtn = styledButton("返回大厅", new Color(180, 200, 220), new Color(38, 44, 56));
+        backBtn.addActionListener(e -> doReturn.run());
 
         JLabel modeLabel = new JLabel(modeText, SwingConstants.CENTER);
         modeLabel.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
@@ -863,32 +1133,50 @@ public class LobbyFrame extends JFrame {
         btnPanel.add(backBtn);
         btnPanel.add(actionBtn);
 
-        JPanel bottom = new JPanel(new BorderLayout());
-        bottom.add(modeLabel, BorderLayout.NORTH);
-        bottom.add(statusLabel, BorderLayout.CENTER);
-        bottom.add(btnPanel, BorderLayout.EAST);
+        JPanel top = new JPanel(new BorderLayout());
+        top.setBackground(new Color(30, 34, 42));
+        statusLabel.setForeground(new Color(230, 230, 230));
+        top.add(statusLabel, BorderLayout.CENTER);
+        top.add(modeLabel, BorderLayout.EAST);
+        modeLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 10));
 
-        frame.setLayout(new BorderLayout());
-        frame.add(boardPanel, BorderLayout.CENTER);
-        frame.add(side, BorderLayout.EAST);
-        frame.add(bottom, BorderLayout.SOUTH);
+        JPanel bottom = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 4));
+        bottom.add(backBtn);
+        bottom.add(actionBtn);
 
-        frame.addWindowListener(new WindowAdapter() {
-            @Override
-            public void windowClosed(WindowEvent e) {
-                clock.stop();
-                if (net instanceof OnlinePlay op && !game.isGameOver()) op.disconnect();
-                else if (net != null) net.close();
-                setVisible(true);
-                checkActiveRoom();
-            }
-        });
+        JPanel gamePanel = new JPanel(new BorderLayout());
+        boardPanel.setBackground(new Color(40, 44, 52));
+        gamePanel.add(top, BorderLayout.NORTH);
+        gamePanel.add(boardPanel, BorderLayout.CENTER);
+        gamePanel.add(side, BorderLayout.EAST);
+        gamePanel.add(bottom, BorderLayout.SOUTH);
 
-        frame.pack();
-        frame.setLocationRelativeTo(null);
-        frame.setVisible(true);
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        if (gameWindowListener != null) removeWindowListener(gameWindowListener);
+        gameWindowListener = new WindowAdapter() {
+            @Override public void windowClosing(WindowEvent e) { doReturn.run(); }
+        };
+        addWindowListener(gameWindowListener);
+
+        setContentPane(gamePanel);
+        pack();
+        setLocationRelativeTo(null);
 
         if (robot != null && robot.getAiPlayer() == GameLogic.BLACK) boardPanel.triggerFirstAiMove();
+    }
+
+    private void returnToLobby() {
+        if (gameWindowListener != null) {
+            removeWindowListener(gameWindowListener);
+            gameWindowListener = null;
+        }
+        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        setTitle("五子棋");
+        setContentPane(lobbyPanel);
+        pack();
+        setLocationRelativeTo(null);
+        checkActiveRoom();
+        loadLobbyStats();
     }
 
     private JPanel playerCard(String[] names, Image[] avatars, int idx, int pieceColor,
@@ -1023,6 +1311,114 @@ public class LobbyFrame extends JFrame {
         card.setOpaque(false);
         card.setPreferredSize(new Dimension(144, 210));
         return card;
+    }
+
+    private static void initDarkOptionPane() {
+        Color bg = new Color(30, 34, 42);
+        Color fg = new Color(200, 205, 215);
+        Color fieldBg = new Color(45, 50, 60);
+        Font font = new Font("Microsoft YaHei", Font.PLAIN, 13);
+        UIManager.put("OptionPane.background", bg);
+        UIManager.put("OptionPane.messageForeground", fg);
+        UIManager.put("OptionPane.messageFont", font);
+        UIManager.put("Panel.background", bg);
+        UIManager.put("Label.foreground", fg);
+        UIManager.put("Label.font", font);
+        UIManager.put("Button.background", new Color(50, 55, 65));
+        UIManager.put("Button.foreground", fg);
+        UIManager.put("Button.font", font);
+        UIManager.put("TextField.background", fieldBg);
+        UIManager.put("TextField.foreground", fg);
+        UIManager.put("TextField.caretForeground", fg);
+        UIManager.put("TextField.font", font);
+    }
+
+    private int showChoiceDialog(String title, String opt1, String opt2) {
+        JDialog d = new JDialog(this, title, true);
+        d.setLayout(new BorderLayout());
+        int[] result = {-1};
+
+        JLabel lb = new JLabel(title, SwingConstants.CENTER);
+        lb.setFont(new Font("Microsoft YaHei", Font.BOLD, 16));
+        lb.setForeground(new Color(220, 225, 235));
+        lb.setBorder(BorderFactory.createEmptyBorder(20, 20, 10, 20));
+
+        JButton b1 = styledButton(opt1, new Color(200, 220, 200), new Color(35, 50, 40));
+        b1.setPreferredSize(new Dimension(120, 34));
+        b1.addActionListener(e -> { result[0] = 0; d.dispose(); });
+
+        JButton b2 = styledButton(opt2, new Color(180, 200, 220), new Color(38, 44, 56));
+        b2.setPreferredSize(new Dimension(120, 34));
+        b2.addActionListener(e -> { result[0] = 1; d.dispose(); });
+
+        JPanel bp = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 0));
+        bp.setBorder(BorderFactory.createEmptyBorder(5, 20, 18, 20));
+        bp.add(b1);
+        bp.add(b2);
+
+        d.add(lb, BorderLayout.CENTER);
+        d.add(bp, BorderLayout.SOUTH);
+        d.getContentPane().setBackground(new Color(30, 34, 42));
+        darkDialog(d);
+        d.pack();
+        d.setResizable(false);
+        d.setLocationRelativeTo(this);
+        d.setVisible(true);
+        return result[0];
+    }
+
+    private static void darkDialog(JDialog d) {
+        Color bg = new Color(30, 34, 42);
+        Color fg = new Color(200, 205, 215);
+        d.getContentPane().setBackground(bg);
+        darkChildren(d.getContentPane(), bg, fg);
+    }
+
+    private static void darkChildren(Container c, Color bg, Color fg) {
+        for (Component comp : c.getComponents()) {
+            if (comp instanceof JPanel p) { p.setBackground(bg); }
+            if (comp instanceof JLabel l) { l.setForeground(fg); }
+            if (comp instanceof JList<?> l) { l.setBackground(new Color(38, 42, 52)); l.setForeground(fg); l.setSelectionBackground(new Color(55, 70, 95)); }
+            if (comp instanceof JScrollPane sp) { sp.getViewport().setBackground(new Color(38, 42, 52)); sp.setBorder(BorderFactory.createEmptyBorder()); darkChildren(sp.getViewport(), bg, fg); }
+            if (comp instanceof Container ct) darkChildren(ct, bg, fg);
+        }
+    }
+
+    private static JButton styledButton(String text, Color fg, Color bg) {
+        Color border = new Color(
+                Math.min(255, bg.getRed() + 30),
+                Math.min(255, bg.getGreen() + 30),
+                Math.min(255, bg.getBlue() + 30));
+        Color hover = new Color(
+                Math.min(255, bg.getRed() + 18),
+                Math.min(255, bg.getGreen() + 18),
+                Math.min(255, bg.getBlue() + 18));
+        JButton btn = new JButton(text) {
+            @Override protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(getBackground());
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
+                super.paintComponent(g);
+            }
+            @Override protected void paintBorder(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(border);
+                g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 10, 10);
+            }
+        };
+        btn.setFont(new Font("Microsoft YaHei", Font.PLAIN, 13));
+        btn.setForeground(fg);
+        btn.setBackground(bg);
+        btn.setContentAreaFilled(false);
+        btn.setFocusPainted(false);
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btn.addMouseListener(new MouseAdapter() {
+            @Override public void mouseEntered(MouseEvent e) { btn.setBackground(hover); }
+            @Override public void mouseExited(MouseEvent e) { btn.setBackground(bg); }
+        });
+        return btn;
     }
 
     private static String fmtTime(int sec) {

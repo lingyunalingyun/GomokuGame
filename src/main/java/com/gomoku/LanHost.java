@@ -4,6 +4,12 @@ import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 
+/**
+ * 局域网主机端（功能二：在线对战的局域网模式）
+ * 实现 NetworkPlay 接口
+ * 使用 UDP 广播房间信息供客户端发现，TCP ServerSocket 等待客户端连接
+ * 通过 TCP 流（PrintWriter/BufferedReader）收发文本协议命令
+ */
 public class LanHost implements NetworkPlay {
 
     static final int UDP_PORT = 23456;

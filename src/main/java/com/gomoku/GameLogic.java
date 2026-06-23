@@ -1,5 +1,11 @@
 package com.gomoku;
 
+/**
+ * 五子棋核心逻辑类
+ * 管理 15×15 棋盘状态、落子规则、胜负判定
+ * 使用二维数组 board[][] 存储棋盘，0=空/1=黑/2=白
+ * checkWin() 通过四方向（横/竖/正斜/反斜）连子计数判断胜负
+ */
 public class GameLogic {
 
     public static final int BOARD_SIZE = 15;
@@ -87,4 +93,10 @@ public class GameLogic {
     public int getWinner() { return winner; }
     public int getLastRow() { return lastRow; }
     public int getLastCol() { return lastCol; }
+
+    public int getMoveCount() {
+        int count = 0;
+        for (int[] row : board) for (int cell : row) if (cell != EMPTY) count++;
+        return count;
+    }
 }

@@ -5,6 +5,13 @@ import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.function.Consumer;
 
+/**
+ * 局域网客户端（功能二：在线对战的局域网模式）
+ * 实现 NetworkPlay 接口
+ * startDiscovery() 监听 UDP 广播发现局域网内的房间
+ * connect() 通过 TCP Socket 连接到主机端进行对弈
+ * RoomInfo 内部 record 类封装房间信息
+ */
 public class LanGuest implements NetworkPlay {
 
     private Socket socket;

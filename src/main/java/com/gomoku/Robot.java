@@ -1,5 +1,11 @@
 package com.gomoku;
 
+/**
+ * AI 机器人类（人机对战的对手）
+ * 使用评分算法遍历空位，对每个位置在四方向评估攻防价值
+ * 评分规则：活一=10、活二=100、活三=5000、活四=100000、五连=1000000
+ * bestMove() 综合攻击和防守分数选出最优落子位置
+ */
 public class Robot {
 
     private final int aiPlayer;

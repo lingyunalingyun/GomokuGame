@@ -6,6 +6,11 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 
+/**
+ * 认证服务类（功能一：用户登录的网络通信部分）
+ * 使用 Java 11+ HttpClient 向服务器发送 JSON 登录请求
+ * 解析 JSON 响应构造 UserInfo 对象
+ */
 public class AuthService {
 
     private static final String LOGIN_URL = "https://musetreehouse.com/api/game_login.php";

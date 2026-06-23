@@ -4,14 +4,22 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.event.MouseMotionAdapter;
 import java.awt.geom.Ellipse2D;
 
+/**
+ * 棋盘面板（继承 JPanel）
+ * 负责棋盘绘制（仿木纹渐变背景、棋子 RadialGradientPaint 3D 光影效果）、
+ * 鼠标交互（点击落子、悬停预览）、AI 触发和网络同步
+ * 重写 paintComponent() 实现自定义绘图
+ */
 public class BoardPanel extends JPanel {
 
     private static final int MARGIN = 40;
     private static final int CELL_SIZE = 40;
-    private static final int PIECE_RADIUS = 16;
+    private static final int PIECE_RADIUS = 17;
     private static final int BOARD_PX = MARGIN * 2 + CELL_SIZE * (GameLogic.BOARD_SIZE - 1);
+    private int hoverRow = -1, hoverCol = -1;
 
     private final GameLogic game;
     private final JLabel statusLabel;
@@ -26,7 +34,6 @@ public class BoardPanel extends JPanel {
         this.game = game;
         this.statusLabel = statusLabel;
         setPreferredSize(new Dimension(BOARD_PX, BOARD_PX));
-        setBackground(new Color(220, 179, 92));
         updateStatus();
 
         addMouseListener(new MouseAdapter() {
@@ -46,6 +53,18 @@ public class BoardPanel extends JPanel {
                         triggerAiMove();
                     }
                 }
+            }
+            @Override
+            public void mouseExited(MouseEvent e) { hoverRow = hoverCol = -1; repaint(); }
+        });
+        addMouseMotionListener(new MouseMotionAdapter() {
+            @Override
+            public void mouseMoved(MouseEvent e) {
+                int c = Math.round((float) (e.getX() - MARGIN) / CELL_SIZE);
+                int r = Math.round((float) (e.getY() - MARGIN) / CELL_SIZE);
+                if (r >= 0 && r < GameLogic.BOARD_SIZE && c >= 0 && c < GameLogic.BOARD_SIZE) {
+                    if (r != hoverRow || c != hoverCol) { hoverRow = r; hoverCol = c; repaint(); }
+                } else if (hoverRow >= 0) { hoverRow = hoverCol = -1; repaint(); }
             }
         });
     }
@@ -134,24 +153,41 @@ public class BoardPanel extends JPanel {
         super.paintComponent(g);
         Graphics2D g2 = (Graphics2D) g;
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        drawBoard(g2);
         drawGrid(g2);
         drawStarPoints(g2);
+        drawHover(g2);
         drawPieces(g2);
         drawLastMove(g2);
     }
 
+    private void drawBoard(Graphics2D g2) {
+        int bx = MARGIN - 20, by = MARGIN - 20;
+        int bw = (GameLogic.BOARD_SIZE - 1) * CELL_SIZE + 40;
+        g2.setPaint(new GradientPaint(bx, by, new Color(235, 195, 120), bx + bw, by + bw, new Color(210, 170, 90)));
+        g2.fillRoundRect(bx, by, bw, bw, 6, 6);
+        g2.setColor(new Color(140, 100, 50));
+        g2.setStroke(new BasicStroke(2.5f));
+        g2.drawRoundRect(bx, by, bw, bw, 6, 6);
+        g2.setColor(new Color(160, 120, 60));
+        g2.setStroke(new BasicStroke(1f));
+        g2.drawRoundRect(bx + 4, by + 4, bw - 8, bw - 8, 4, 4);
+    }
+
     private void drawGrid(Graphics2D g2) {
-        g2.setColor(Color.BLACK);
-        g2.setStroke(new BasicStroke(1.0f));
+        g2.setColor(new Color(80, 55, 30));
+        g2.setStroke(new BasicStroke(0.9f));
+        int end = MARGIN + (GameLogic.BOARD_SIZE - 1) * CELL_SIZE;
         for (int i = 0; i < GameLogic.BOARD_SIZE; i++) {
             int pos = MARGIN + i * CELL_SIZE;
-            g2.drawLine(MARGIN, pos, MARGIN + (GameLogic.BOARD_SIZE - 1) * CELL_SIZE, pos);
-            g2.drawLine(pos, MARGIN, pos, MARGIN + (GameLogic.BOARD_SIZE - 1) * CELL_SIZE);
+            g2.drawLine(MARGIN, pos, end, pos);
+            g2.drawLine(pos, MARGIN, pos, end);
         }
     }
 
     private void drawStarPoints(Graphics2D g2) {
-        g2.setColor(Color.BLACK);
+        g2.setColor(new Color(60, 40, 20));
         int[] stars = {3, 7, 11};
         for (int r : stars) {
             for (int c : stars) {
@@ -162,6 +198,18 @@ public class BoardPanel extends JPanel {
         }
     }
 
+    private void drawHover(Graphics2D g2) {
+        if (hoverRow < 0 || game.isGameOver() || waitingForAi) return;
+        if (localPlayer != 0 && game.getCurrentPlayer() != localPlayer) return;
+        if (game.getPiece(hoverRow, hoverCol) != GameLogic.EMPTY) return;
+        int cx = MARGIN + hoverCol * CELL_SIZE;
+        int cy = MARGIN + hoverRow * CELL_SIZE;
+        int r = PIECE_RADIUS;
+        Color c = game.getCurrentPlayer() == GameLogic.BLACK ? new Color(0, 0, 0, 50) : new Color(255, 255, 255, 70);
+        g2.setColor(c);
+        g2.fillOval(cx - r, cy - r, r * 2, r * 2);
+    }
+
     private void drawPieces(Graphics2D g2) {
         for (int r = 0; r < GameLogic.BOARD_SIZE; r++) {
             for (int c = 0; c < GameLogic.BOARD_SIZE; c++) {
@@ -170,22 +218,33 @@ public class BoardPanel extends JPanel {
 
                 int cx = MARGIN + c * CELL_SIZE;
                 int cy = MARGIN + r * CELL_SIZE;
-                Ellipse2D oval = new Ellipse2D.Float(
-                        cx - PIECE_RADIUS, cy - PIECE_RADIUS,
-                        PIECE_RADIUS * 2, PIECE_RADIUS * 2);
+                int pr = PIECE_RADIUS;
+
+                Ellipse2D shadow = new Ellipse2D.Float(cx - pr + 2, cy - pr + 2, pr * 2, pr * 2);
+                g2.setColor(new Color(0, 0, 0, 40));
+                g2.fill(shadow);
+
+                Ellipse2D oval = new Ellipse2D.Float(cx - pr, cy - pr, pr * 2, pr * 2);
 
                 if (piece == GameLogic.BLACK) {
-                    g2.setPaint(new GradientPaint(
-                            cx - PIECE_RADIUS, cy - PIECE_RADIUS, new Color(60, 60, 60),
-                            cx + PIECE_RADIUS, cy + PIECE_RADIUS, Color.BLACK));
+                    g2.setPaint(new RadialGradientPaint(
+                            cx - pr * 0.3f, cy - pr * 0.3f, pr * 1.8f,
+                            new float[]{0f, 1f},
+                            new Color[]{new Color(80, 80, 80), new Color(10, 10, 10)}));
                 } else {
-                    g2.setPaint(new GradientPaint(
-                            cx - PIECE_RADIUS, cy - PIECE_RADIUS, Color.WHITE,
-                            cx + PIECE_RADIUS, cy + PIECE_RADIUS, new Color(200, 200, 200)));
+                    g2.setPaint(new RadialGradientPaint(
+                            cx - pr * 0.3f, cy - pr * 0.3f, pr * 1.8f,
+                            new float[]{0f, 1f},
+                            new Color[]{new Color(255, 255, 255), new Color(190, 190, 185)}));
                 }
                 g2.fill(oval);
-                g2.setColor(new Color(0, 0, 0, 80));
-                g2.setStroke(new BasicStroke(1.0f));
+
+                Ellipse2D highlight = new Ellipse2D.Float(cx - pr * 0.45f, cy - pr * 0.5f, pr * 0.6f, pr * 0.4f);
+                g2.setColor(piece == GameLogic.BLACK ? new Color(255, 255, 255, 35) : new Color(255, 255, 255, 120));
+                g2.fill(highlight);
+
+                g2.setColor(new Color(0, 0, 0, 60));
+                g2.setStroke(new BasicStroke(0.8f));
                 g2.draw(oval);
             }
         }
@@ -196,8 +255,9 @@ public class BoardPanel extends JPanel {
         if (lr < 0) return;
         int cx = MARGIN + lc * CELL_SIZE;
         int cy = MARGIN + lr * CELL_SIZE;
-        g2.setColor(Color.RED);
-        g2.setStroke(new BasicStroke(2.0f));
+        int piece = game.getPiece(lr, lc);
+        g2.setColor(piece == GameLogic.BLACK ? new Color(255, 80, 80) : new Color(220, 50, 50));
+        g2.setStroke(new BasicStroke(2f));
         int s = 5;
         g2.drawLine(cx - s, cy, cx + s, cy);
         g2.drawLine(cx, cy - s, cx, cy + s);
