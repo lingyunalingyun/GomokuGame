@@ -29,5 +29,7 @@ public interface NetworkPlay {
         void onRemoteName(String name);
         void onRemoteSurrender();
         void onDisconnect(String reason);
+        default void onRematch() {}
+        default void onOpponentLeft() {}
     }
 }

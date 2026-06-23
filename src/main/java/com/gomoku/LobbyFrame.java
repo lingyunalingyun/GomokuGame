@@ -992,6 +992,9 @@ public class LobbyFrame extends JFrame {
             updateTotal.run();
         };
 
+        AtomicBoolean opWantsRematch = new AtomicBoolean(false);
+        AtomicBoolean opLeftGame = new AtomicBoolean(false);
+
         // ── 返回大厅 ──
         Runnable doReturn = () -> {
             clock.stop();
@@ -1053,6 +1056,25 @@ public class LobbyFrame extends JFrame {
                         JOptionPane.showMessageDialog(boardPanel.getTopLevelAncestor(), msg, dlgTitle, JOptionPane.INFORMATION_MESSAGE);
                     }
                 }
+                if (net instanceof OnlinePlay op) {
+                    int rmResult = showRematchDialog(op, opWantsRematch, opLeftGame);
+                    if (rmResult == 0) {
+                        game.reset();
+                        boardPanel.repaint();
+                        boardPanel.updateStatusPublic();
+                        resetTimers.run();
+                        opWantsRematch.set(false);
+                        opLeftGame.set(false);
+                    } else if (rmResult == 2) {
+                        op.disconnect();
+                        returnToLobby();
+                        waitForNewOpponent(op.getRoomId());
+                    } else {
+                        OnlinePlay.post("leave_room", "{\"room_id\":" + op.getRoomId() + ",\"player\":" + op.getMyPlayer() + "}");
+                        op.disconnect();
+                        returnToLobby();
+                    }
+                }
             }
             blackCard.repaint(); whiteCard.repaint();
         });
@@ -1090,11 +1112,16 @@ public class LobbyFrame extends JFrame {
                         clock.stop();
                         boardPanel.repaint();
                         boardPanel.updateStatusPublic();
-                        JOptionPane.showMessageDialog(LobbyFrame.this, "对方投降，你赢了！", "对局结束", JOptionPane.INFORMATION_MESSAGE);
                     });
                 }
                 @Override public void onDisconnect(String reason) {
                     SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(LobbyFrame.this, reason, "连接断开", JOptionPane.WARNING_MESSAGE));
+                }
+                @Override public void onRematch() {
+                    SwingUtilities.invokeLater(() -> opWantsRematch.set(true));
+                }
+                @Override public void onOpponentLeft() {
+                    SwingUtilities.invokeLater(() -> opLeftGame.set(true));
                 }
             });
             net.startListening();
@@ -1163,6 +1190,103 @@ public class LobbyFrame extends JFrame {
         setLocationRelativeTo(null);
 
         if (robot != null && robot.getAiPlayer() == GameLogic.BLACK) boardPanel.triggerFirstAiMove();
+    }
+
+    // Returns: 0=rematch, 1=exit, 2=opponent left
+    private int showRematchDialog(OnlinePlay op, AtomicBoolean opWantsRematch, AtomicBoolean opLeftGame) {
+        JDialog d = new JDialog(this, "对局结束", true);
+        int[] result = {1};
+        AtomicBoolean myRematch = new AtomicBoolean(false);
+
+        JLabel info = new JLabel(" ", SwingConstants.CENTER);
+        info.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
+        info.setForeground(new Color(140, 145, 155));
+        info.setBorder(BorderFactory.createEmptyBorder(15, 20, 5, 20));
+        if (opWantsRematch.get()) info.setText("对方请求再来一局");
+
+        JButton rematchBtn = styledButton("再来一局", new Color(200, 220, 200), new Color(35, 50, 40));
+        JButton exitBtn = styledButton("退出对局", new Color(200, 205, 215), new Color(50, 40, 40));
+
+        rematchBtn.addActionListener(e -> {
+            myRematch.set(true);
+            op.sendRematch();
+            rematchBtn.setText("等待对方...");
+            rematchBtn.setEnabled(false);
+            if (opWantsRematch.get()) { result[0] = 0; d.dispose(); }
+        });
+        exitBtn.addActionListener(e -> { result[0] = 1; d.dispose(); });
+
+        Timer check = new Timer(200, e -> {
+            if (opLeftGame.get()) { result[0] = 2; d.dispose(); return; }
+            if (opWantsRematch.get()) {
+                if (myRematch.get()) { result[0] = 0; d.dispose(); }
+                else info.setText("对方请求再来一局");
+            }
+        });
+        check.start();
+
+        d.addWindowListener(new WindowAdapter() {
+            @Override public void windowClosing(WindowEvent e) { result[0] = 1; d.dispose(); }
+        });
+
+        JPanel bp = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 0));
+        bp.setBorder(BorderFactory.createEmptyBorder(5, 20, 15, 20));
+        bp.add(rematchBtn); bp.add(exitBtn);
+        d.setLayout(new BorderLayout());
+        d.add(info, BorderLayout.CENTER);
+        d.add(bp, BorderLayout.SOUTH);
+        d.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+        darkDialog(d);
+        d.pack();
+        d.setMinimumSize(new Dimension(280, 120));
+        d.setLocationRelativeTo(this);
+        d.setVisible(true);
+        check.stop();
+        return result[0];
+    }
+
+    private void waitForNewOpponent(int roomId) {
+        JDialog d = new JDialog(this, "等待对手", true);
+        JLabel lb = new JLabel("<html><center>对方已退出，等待新对手加入...<br>房间号: " + roomId + "</center></html>", SwingConstants.CENTER);
+        lb.setFont(new Font("Microsoft YaHei", Font.PLAIN, 14));
+        lb.setBorder(BorderFactory.createEmptyBorder(15, 20, 5, 20));
+        JButton cancel = styledButton("取消", new Color(200, 205, 215), new Color(50, 40, 40));
+        JPanel bp = new JPanel();
+        bp.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
+        bp.add(cancel);
+        d.setLayout(new BorderLayout());
+        d.add(lb, BorderLayout.CENTER);
+        d.add(bp, BorderLayout.SOUTH);
+        d.setSize(300, 150);
+        d.setLocationRelativeTo(this);
+        d.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+        darkDialog(d);
+
+        AtomicBoolean ok = new AtomicBoolean();
+        AtomicBoolean cancelled = new AtomicBoolean();
+        Runnable doCancel = () -> { cancelled.set(true); d.dispose(); };
+        cancel.addActionListener(e -> doCancel.run());
+        d.addWindowListener(new WindowAdapter() { @Override public void windowClosing(WindowEvent e) { doCancel.run(); } });
+
+        new Thread(() -> {
+            while (!cancelled.get()) {
+                try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
+                String poll = OnlinePlay.get("poll&room_id=" + roomId + "&after=0");
+                if (poll != null && poll.contains("\"status\":\"playing\"")) {
+                    ok.set(true);
+                    SwingUtilities.invokeLater(d::dispose);
+                    break;
+                }
+            }
+        }, "WaitNewOpponent").start();
+
+        d.setVisible(true);
+        if (ok.get()) {
+            OnlinePlay net = new OnlinePlay(roomId, 1);
+            launchGame(null, net, GameLogic.BLACK, "在线对战（你执黑）");
+        } else {
+            OnlinePlay.post("cancel_room", "{\"room_id\":" + roomId + "}");
+        }
     }
 
     private void returnToLobby() {

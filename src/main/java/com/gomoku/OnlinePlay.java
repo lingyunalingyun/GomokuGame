@@ -48,6 +48,13 @@ public class OnlinePlay implements NetworkPlay {
         this.myPlayer = myPlayer;
     }
 
+    public int getRoomId() { return roomId; }
+    public int getMyPlayer() { return myPlayer; }
+
+    public void sendRematch() {
+        post("rematch", "{\"room_id\":" + roomId + ",\"player\":" + myPlayer + "}");
+    }
+
     // ── NetworkPlay 接口 ──
 
     @Override
@@ -161,6 +168,8 @@ public class OnlinePlay implements NetworkPlay {
             case "SURRENDER" -> callback.onRemoteSurrender();
             case "QUIT"  -> { running = false; callback.onDisconnect(data != null && !data.isEmpty() ? data : "对方已离开"); }
             case "NAME"  -> callback.onRemoteName(data);
+            case "REMATCH" -> callback.onRematch();
+            case "LEAVE" -> { running = false; callback.onOpponentLeft(); }
         }
     }
 
