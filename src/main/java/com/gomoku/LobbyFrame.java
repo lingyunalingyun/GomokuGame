@@ -595,7 +595,7 @@ public class LobbyFrame extends JFrame {
             OnlinePlay net = new OnlinePlay(roomId, 1);
             launchGame(null, net, GameLogic.BLACK, "在线对战（你执黑）");
         } else {
-            OnlinePlay.post("quit", "{\"room_id\":" + roomId + ",\"player\":1}");
+            OnlinePlay.post("cancel_room", "{\"room_id\":" + roomId + "}");
         }
     }
 
