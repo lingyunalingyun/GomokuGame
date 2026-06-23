@@ -4,7 +4,12 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 
 /**
  * 在线对战实现类（功能二：在线对战/房间管理的核心）
@@ -16,7 +21,21 @@ import java.time.Duration;
 public class OnlinePlay implements NetworkPlay {
 
     private static final String API = "https://musetreehouse.com/api/game_room.php";
-    private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+    private static final HttpClient HTTP = buildClient();
+
+    private static HttpClient buildClient() {
+        try {
+            SSLContext ctx = SSLContext.getInstance("TLS");
+            ctx.init(null, new TrustManager[]{new X509TrustManager() {
+                public void checkClientTrusted(X509Certificate[] c, String t) {}
+                public void checkServerTrusted(X509Certificate[] c, String t) {}
+                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+            }}, new SecureRandom());
+            return HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).sslContext(ctx).build();
+        } catch (Exception e) {
+            return HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        }
+    }
 
     private final int roomId;
     private final int myPlayer;

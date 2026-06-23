@@ -4,7 +4,12 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 
 /**
  * 认证服务类（功能一：用户登录的网络通信部分）
@@ -19,8 +24,15 @@ public class AuthService {
         String json = "{\"username\":\"" + escapeJson(username)
                 + "\",\"password\":\"" + escapeJson(password) + "\"}";
 
+        SSLContext ctx = SSLContext.getInstance("TLS");
+        ctx.init(null, new TrustManager[]{new X509TrustManager() {
+            public void checkClientTrusted(X509Certificate[] c, String t) {}
+            public void checkServerTrusted(X509Certificate[] c, String t) {}
+            public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+        }}, new SecureRandom());
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
+                .sslContext(ctx)
                 .build();
 
         HttpRequest request = HttpRequest.newBuilder()
