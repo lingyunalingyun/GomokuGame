@@ -969,7 +969,7 @@ public class LobbyFrame extends JFrame {
                     autoMoving[0] = true;
                     autoMoves[ci]++;
                     int cur = game.getCurrentPlayer();
-                    Robot tempAi = new Robot(cur == GameLogic.BLACK ? GameLogic.WHITE : GameLogic.BLACK);
+                    Robot tempAi = new Robot(cur);
                     int[] mv = tempAi.bestMove(game);
                     game.placePiece(mv[0], mv[1]);
                     boardPanel.repaint();
