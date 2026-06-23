@@ -14,6 +14,7 @@ public class GameLogic {
     public static final int WHITE = 2;
 
     private final int[][] board = new int[BOARD_SIZE][BOARD_SIZE];
+    private final java.util.List<int[]> moveHistory = new java.util.ArrayList<>();
     private int currentPlayer = BLACK;
     private boolean gameOver = false;
     private int winner = EMPTY;
@@ -24,6 +25,7 @@ public class GameLogic {
         if (board[row][col] != EMPTY) return false;
 
         board[row][col] = currentPlayer;
+        moveHistory.add(new int[]{row, col, currentPlayer});
         lastRow = row;
         lastCol = col;
 
@@ -79,6 +81,7 @@ public class GameLogic {
         gameOver = false;
         winner = EMPTY;
         lastRow = lastCol = -1;
+        moveHistory.clear();
     }
 
     public void surrender(int loser) {
@@ -98,5 +101,16 @@ public class GameLogic {
         int count = 0;
         for (int[] row : board) for (int cell : row) if (cell != EMPTY) count++;
         return count;
+    }
+
+    public java.util.List<int[]> getMoveHistory() { return moveHistory; }
+
+    public String exportMoves() {
+        StringBuilder sb = new StringBuilder();
+        for (int[] m : moveHistory) {
+            if (!sb.isEmpty()) sb.append(';');
+            sb.append(m[0]).append(',').append(m[1]).append(',').append(m[2]);
+        }
+        return sb.toString();
     }
 }

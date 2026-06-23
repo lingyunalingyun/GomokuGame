@@ -425,6 +425,7 @@ public class LobbyFrame extends JFrame {
         javax.swing.table.DefaultTableModel tableModel = new javax.swing.table.DefaultTableModel(columns, 0) {
             @Override public boolean isCellEditable(int r, int c) { return false; }
         };
+        java.util.List<String> movesDataList = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         JTable table = new JTable(tableModel);
         table.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
         table.setRowHeight(26);
@@ -458,6 +459,7 @@ public class LobbyFrame extends JFrame {
             totalPages[0] = Math.max(1, OnlinePlay.extractInt(resp, "pages"));
             SwingUtilities.invokeLater(() -> {
                 tableModel.setRowCount(0);
+                movesDataList.clear();
                 pageLabel.setText("第 " + currentPage[0] + "/" + totalPages[0] + " 页");
                 prevBtn.setEnabled(currentPage[0] > 1);
                 nextBtn.setEnabled(currentPage[0] < totalPages[0]);
@@ -473,9 +475,11 @@ public class LobbyFrame extends JFrame {
                     String result = switch (OnlinePlay.extractStr(obj, "result")) { case "win" -> "胜利"; case "loss" -> "失败"; default -> "平局"; };
                     int score = OnlinePlay.extractInt(obj, "score");
                     int duration = OnlinePlay.extractInt(obj, "duration");
-                    int moves = OnlinePlay.extractInt(obj, "moves");
+                    int moveCount = OnlinePlay.extractInt(obj, "move_count");
+                    String movesStr = OnlinePlay.extractStr(obj, "moves");
                     String time = OnlinePlay.extractStr(obj, "time");
-                    tableModel.addRow(new Object[]{opponent, mode, result, (score > 0 ? "+" : "") + score, fmtTime(duration), moves, time});
+                    tableModel.addRow(new Object[]{opponent, mode, result, (score > 0 ? "+" : "") + score, fmtTime(duration), moveCount, time});
+                    movesDataList.add(movesStr);
                     pos = e + 1;
                 }
             });
@@ -496,11 +500,25 @@ public class LobbyFrame extends JFrame {
         filterPanel.add(lbM);
         filterPanel.add(modeFilter);
 
+        JButton replayBtn = styledButton("回放", new Color(200, 220, 200), new Color(35, 50, 40));
+        replayBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row < 0) { JOptionPane.showMessageDialog(d, "请先选择一条对局记录"); return; }
+            if (row >= movesDataList.size()) return;
+            String mv = movesDataList.get(row);
+            if (mv == null || mv.isEmpty()) { JOptionPane.showMessageDialog(d, "该对局没有回放数据"); return; }
+            String opponent = (String) tableModel.getValueAt(row, 0);
+            String resultText = (String) tableModel.getValueAt(row, 2);
+            showReplay(mv, opponent, resultText);
+        });
+
         JPanel pagePanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
         pagePanel.setBackground(dBg);
         pagePanel.add(prevBtn);
         pagePanel.add(pageLabel);
         pagePanel.add(nextBtn);
+        pagePanel.add(Box.createHorizontalStrut(15));
+        pagePanel.add(replayBtn);
 
         JScrollPane sp = new JScrollPane(table);
         sp.getViewport().setBackground(new Color(38, 42, 52));
@@ -1083,6 +1101,7 @@ public class LobbyFrame extends JFrame {
                     int movesF = game.getMoveCount();
                     String opNameF = myIdx == 0 ? names[1] : names[0];
                     String modeF = net != null ? "online" : robot != null ? "ai" : "local";
+                    String movesData = game.exportMoves();
                     new Thread(() -> OnlinePlay.post("report_result",
                             "{\"user_id\":" + currentUser.id()
                             + ",\"username\":\"" + currentUser.username().replace("\"","\\\"") + "\""
@@ -1091,7 +1110,8 @@ public class LobbyFrame extends JFrame {
                             + ",\"opponent_name\":\"" + (opNameF != null ? opNameF.replace("\"","\\\"") : "") + "\""
                             + ",\"mode\":\"" + modeF + "\""
                             + ",\"duration\":" + durationF
-                            + ",\"total_moves\":" + movesF + "}"), "Report").start();
+                            + ",\"total_moves\":" + movesF
+                            + ",\"moves\":\"" + movesData + "\"}"), "Report").start();
 
                     if (base > 0) {
                         String dlgTitle = "win".equals(result) ? "胜利" : "平局";
@@ -1239,6 +1259,157 @@ public class LobbyFrame extends JFrame {
         setLocationRelativeTo(null);
 
         if (robot != null && robot.getAiPlayer() == GameLogic.BLACK) boardPanel.triggerFirstAiMove();
+    }
+
+    private void showReplay(String movesData, String opponent, String resultText) {
+        String[] steps = movesData.split(";");
+        int[][] moves = new int[steps.length][3];
+        for (int i = 0; i < steps.length; i++) {
+            String[] p = steps[i].split(",");
+            if (p.length < 3) return;
+            moves[i][0] = Integer.parseInt(p[0]);
+            moves[i][1] = Integer.parseInt(p[1]);
+            moves[i][2] = Integer.parseInt(p[2]);
+        }
+
+        JDialog d = new JDialog(this, "对局回放 — vs " + opponent + " (" + resultText + ")", true);
+        int[][] board = new int[15][15];
+        int[] step = {0};
+        int[] lastR = {-1}, lastC = {-1};
+
+        JPanel boardPanel = new JPanel() {
+            @Override protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                int w = getWidth(), h = getHeight();
+                int sz = Math.min(w, h);
+                int cell = sz / 16;
+                int ox = (w - cell * 14) / 2, oy = (h - cell * 14) / 2;
+
+                g2.setColor(new Color(40, 44, 52));
+                g2.fillRect(0, 0, w, h);
+                g2.setColor(new Color(70, 75, 85));
+                for (int i = 0; i < 15; i++) {
+                    g2.drawLine(ox, oy + i * cell, ox + 14 * cell, oy + i * cell);
+                    g2.drawLine(ox + i * cell, oy, ox + i * cell, oy + 14 * cell);
+                }
+
+                for (int r = 0; r < 15; r++) {
+                    for (int c = 0; c < 15; c++) {
+                        if (board[r][c] == 0) continue;
+                        int cx = ox + c * cell, cy = oy + r * cell;
+                        int ps = (int) (cell * 0.42);
+                        if (board[r][c] == GameLogic.BLACK) {
+                            g2.setColor(new Color(30, 30, 30));
+                            g2.fillOval(cx - ps, cy - ps, ps * 2, ps * 2);
+                        } else {
+                            g2.setColor(new Color(230, 230, 230));
+                            g2.fillOval(cx - ps, cy - ps, ps * 2, ps * 2);
+                            g2.setColor(new Color(80, 80, 80));
+                            g2.drawOval(cx - ps, cy - ps, ps * 2, ps * 2);
+                        }
+                        if (r == lastR[0] && c == lastC[0]) {
+                            g2.setColor(new Color(230, 80, 80));
+                            int ms = ps / 3;
+                            g2.fillOval(cx - ms, cy - ms, ms * 2, ms * 2);
+                        }
+                    }
+                }
+
+                // Draw step numbers
+                g2.setFont(new Font("Arial", Font.BOLD, Math.max(8, cell / 3)));
+                for (int i = 0; i < step[0]; i++) {
+                    int r = moves[i][0], c = moves[i][1], color = moves[i][2];
+                    int cx = ox + c * cell, cy = oy + r * cell;
+                    g2.setColor(color == GameLogic.BLACK ? new Color(200, 200, 200) : new Color(50, 50, 50));
+                    String num = String.valueOf(i + 1);
+                    FontMetrics fm = g2.getFontMetrics();
+                    g2.drawString(num, cx - fm.stringWidth(num) / 2, cy + fm.getAscent() / 2 - 1);
+                }
+            }
+        };
+        boardPanel.setPreferredSize(new Dimension(480, 480));
+
+        JLabel info = new JLabel("第 0/" + moves.length + " 步", SwingConstants.CENTER);
+        info.setFont(new Font("Microsoft YaHei", Font.PLAIN, 13));
+        info.setForeground(new Color(200, 205, 215));
+
+        JButton prevBtn = styledButton("上一步", new Color(200, 205, 215), new Color(40, 48, 62));
+        JButton nextBtn = styledButton("下一步", new Color(200, 205, 215), new Color(40, 48, 62));
+        JButton autoBtn = styledButton("自动播放", new Color(200, 220, 200), new Color(35, 50, 40));
+        JButton resetBtn = styledButton("重置", new Color(200, 205, 215), new Color(50, 40, 40));
+
+        Runnable updateInfo = () -> info.setText("第 " + step[0] + "/" + moves.length + " 步");
+
+        Timer autoTimer = new Timer(500, null);
+
+        prevBtn.addActionListener(e -> {
+            if (step[0] > 0) {
+                step[0]--;
+                int[] m = moves[step[0]];
+                board[m[0]][m[1]] = 0;
+                lastR[0] = step[0] > 0 ? moves[step[0] - 1][0] : -1;
+                lastC[0] = step[0] > 0 ? moves[step[0] - 1][1] : -1;
+                updateInfo.run();
+                boardPanel.repaint();
+            }
+        });
+        nextBtn.addActionListener(e -> {
+            if (step[0] < moves.length) {
+                int[] m = moves[step[0]];
+                board[m[0]][m[1]] = m[2];
+                lastR[0] = m[0]; lastC[0] = m[1];
+                step[0]++;
+                updateInfo.run();
+                boardPanel.repaint();
+            }
+        });
+        resetBtn.addActionListener(e -> {
+            if (autoTimer.isRunning()) autoTimer.stop();
+            autoBtn.setText("自动播放");
+            step[0] = 0;
+            lastR[0] = lastC[0] = -1;
+            for (int[] row : board) java.util.Arrays.fill(row, 0);
+            updateInfo.run();
+            boardPanel.repaint();
+        });
+
+        autoTimer.addActionListener(e -> {
+            if (step[0] < moves.length) {
+                nextBtn.doClick();
+            } else {
+                autoTimer.stop();
+                autoBtn.setText("自动播放");
+            }
+        });
+        autoBtn.addActionListener(e -> {
+            if (autoTimer.isRunning()) {
+                autoTimer.stop();
+                autoBtn.setText("自动播放");
+            } else {
+                if (step[0] >= moves.length) resetBtn.doClick();
+                autoTimer.start();
+                autoBtn.setText("暂停");
+            }
+        });
+
+        JPanel ctrl = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
+        ctrl.setBackground(new Color(30, 34, 42));
+        ctrl.add(resetBtn); ctrl.add(prevBtn); ctrl.add(info); ctrl.add(nextBtn); ctrl.add(autoBtn);
+
+        d.setLayout(new BorderLayout());
+        boardPanel.setBackground(new Color(40, 44, 52));
+        d.add(boardPanel, BorderLayout.CENTER);
+        d.add(ctrl, BorderLayout.SOUTH);
+        darkDialog(d);
+        d.pack();
+        d.setMinimumSize(new Dimension(500, 560));
+        d.setLocationRelativeTo(this);
+        d.addWindowListener(new WindowAdapter() {
+            @Override public void windowClosing(WindowEvent e) { if (autoTimer.isRunning()) autoTimer.stop(); }
+        });
+        d.setVisible(true);
     }
 
     // Returns: 0=rematch, 1=exit, 2=opponent left
