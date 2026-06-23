@@ -549,9 +549,10 @@ public class LobbyFrame extends JFrame {
     // ───────── 在线对战 ─────────
 
     private void startOnline() {
-        int c = showChoiceDialog("在线对战", "创建房间", "加入房间");
+        int c = showChoiceDialog("在线对战", "创建房间", "加入房间", "观战");
         if (c == 0) createOnlineRoom();
         else if (c == 1) joinOnlineRoom();
+        else if (c == 2) spectateOnlineRoom();
     }
 
     private void createOnlineRoom() {
@@ -844,6 +845,226 @@ public class LobbyFrame extends JFrame {
         OnlinePlay net = new OnlinePlay(rid, 2);
         net.setRoomCode(selectedCode.get() != null ? selectedCode.get() : "");
         launchGame(null, net, GameLogic.WHITE, "在线对战（你执白）");
+    }
+
+    // ───────── 观战 ─────────
+
+    private record SpectateEntry(int id, String roomCode, String name, String hostName, String guestName) {
+        @Override public String toString() { return "[" + roomCode + "] " + hostName + " vs " + guestName; }
+    }
+
+    private void spectateOnlineRoom() {
+        JDialog d = new JDialog(this, "选择观战房间", true);
+        d.setLayout(new BorderLayout());
+
+        DefaultListModel<SpectateEntry> model = new DefaultListModel<>();
+        JList<SpectateEntry> list = new JList<>(model);
+        list.setBackground(new Color(38, 42, 50));
+        list.setForeground(new Color(200, 205, 215));
+        list.setSelectionBackground(new Color(60, 80, 120));
+        list.setFont(new Font("Microsoft YaHei", Font.PLAIN, 13));
+        list.setFixedCellHeight(36);
+
+        JLabel hint = new JLabel("正在进行的对局（每 2 秒刷新）");
+        hint.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
+        hint.setForeground(new Color(100, 100, 100));
+        hint.setBorder(BorderFactory.createEmptyBorder(8, 8, 5, 8));
+
+        Timer refresh = new Timer(2000, e -> {
+            String resp = OnlinePlay.get("spectate_list");
+            if (resp == null || !resp.contains("\"rooms\"")) return;
+            SwingUtilities.invokeLater(() -> {
+                int sel = list.getSelectedIndex();
+                model.clear();
+                int pos = 0;
+                while (true) {
+                    int s = resp.indexOf("{\"id\":", pos);
+                    if (s < 0) break;
+                    int end = resp.indexOf('}', s);
+                    if (end < 0) break;
+                    String obj = resp.substring(s, end + 1);
+                    int id = OnlinePlay.extractInt(obj, "id");
+                    String code = OnlinePlay.extractStr(obj, "room_code");
+                    String rname = OnlinePlay.extractStr(obj, "name");
+                    String host = OnlinePlay.extractStr(obj, "host_name");
+                    String guest = OnlinePlay.extractStr(obj, "guest_name");
+                    model.addElement(new SpectateEntry(id, code, rname, host, guest));
+                    pos = end + 1;
+                }
+                if (sel >= 0 && sel < model.size()) list.setSelectedIndex(sel);
+            });
+        });
+        refresh.setInitialDelay(0);
+        refresh.start();
+
+        JButton watchBtn = styledButton("观战", new Color(220, 200, 180), new Color(56, 44, 30));
+        watchBtn.addActionListener(e -> {
+            SpectateEntry entry = list.getSelectedValue();
+            if (entry == null) { JOptionPane.showMessageDialog(d, "请先选择一个对局"); return; }
+            refresh.stop();
+            d.dispose();
+            launchSpectate(entry.id(), entry.hostName(), entry.guestName());
+        });
+
+        JButton cancelBtn = styledButton("取消", new Color(200, 205, 215), new Color(50, 40, 40));
+        cancelBtn.addActionListener(e -> { refresh.stop(); d.dispose(); });
+
+        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 6));
+        btnPanel.setBackground(new Color(30, 34, 42));
+        btnPanel.add(watchBtn);
+        btnPanel.add(cancelBtn);
+
+        d.add(hint, BorderLayout.NORTH);
+        d.add(new JScrollPane(list), BorderLayout.CENTER);
+        d.add(btnPanel, BorderLayout.SOUTH);
+        d.getContentPane().setBackground(new Color(30, 34, 42));
+        darkDialog(d);
+        d.setSize(380, 320);
+        d.setLocationRelativeTo(this);
+        d.addWindowListener(new WindowAdapter() {
+            @Override public void windowClosing(WindowEvent e) { refresh.stop(); }
+        });
+        d.setVisible(true);
+    }
+
+    private void launchSpectate(int roomId, String hostName, String guestName) {
+        JDialog d = new JDialog(this, "观战 — " + hostName + " vs " + guestName, false);
+        int[][] board = new int[15][15];
+        int[] lastR = {-1}, lastC = {-1};
+        int[] stepCount = {0};
+        boolean[] alive = {true};
+
+        JPanel boardPanel = new JPanel() {
+            @Override protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                int w = getWidth(), h = getHeight();
+                int sz = Math.min(w, h);
+                int cell = sz / 16;
+                int ox = (w - cell * 14) / 2, oy = (h - cell * 14) / 2;
+
+                g2.setColor(new Color(40, 44, 52));
+                g2.fillRect(0, 0, w, h);
+                g2.setColor(new Color(70, 75, 85));
+                for (int i = 0; i < 15; i++) {
+                    g2.drawLine(ox, oy + i * cell, ox + 14 * cell, oy + i * cell);
+                    g2.drawLine(ox + i * cell, oy, ox + i * cell, oy + 14 * cell);
+                }
+
+                for (int r = 0; r < 15; r++) {
+                    for (int c = 0; c < 15; c++) {
+                        if (board[r][c] == 0) continue;
+                        int cx = ox + c * cell, cy = oy + r * cell;
+                        int ps = (int) (cell * 0.42);
+                        if (board[r][c] == GameLogic.BLACK) {
+                            g2.setColor(new Color(30, 30, 30));
+                            g2.fillOval(cx - ps, cy - ps, ps * 2, ps * 2);
+                        } else {
+                            g2.setColor(new Color(230, 230, 230));
+                            g2.fillOval(cx - ps, cy - ps, ps * 2, ps * 2);
+                            g2.setColor(new Color(80, 80, 80));
+                            g2.drawOval(cx - ps, cy - ps, ps * 2, ps * 2);
+                        }
+                        if (r == lastR[0] && c == lastC[0]) {
+                            g2.setColor(new Color(230, 80, 80));
+                            int ms = ps / 3;
+                            g2.fillOval(cx - ms, cy - ms, ms * 2, ms * 2);
+                        }
+                    }
+                }
+            }
+        };
+        boardPanel.setPreferredSize(new Dimension(480, 480));
+        boardPanel.setBackground(new Color(40, 44, 52));
+
+        JLabel info = new JLabel("⚫ " + hostName + "  vs  ⚪ " + guestName + "  |  第 0 步", SwingConstants.CENTER);
+        info.setFont(new Font("Microsoft YaHei", Font.PLAIN, 13));
+        info.setForeground(new Color(200, 205, 215));
+        info.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
+
+        int[] lastEventId = {0};
+
+        Timer pollTimer = new Timer(500, e -> {
+            String resp = OnlinePlay.get("poll&room_id=" + roomId + "&after=" + lastEventId[0]);
+            if (resp == null) return;
+            String status = OnlinePlay.extractStr(resp, "status");
+
+            int pos = 0;
+            boolean changed = false;
+            while (true) {
+                int s = resp.indexOf("\"id\":", pos);
+                if (s < 0) break;
+                int end = resp.indexOf('}', s);
+                if (end < 0) break;
+                String obj = resp.substring(s, end + 1);
+                int evId = OnlinePlay.extractInt(obj, "id");
+                if (evId <= lastEventId[0]) { pos = end + 1; continue; }
+                lastEventId[0] = evId;
+                String type = OnlinePlay.extractStr(obj, "type");
+                if ("MOVE".equals(type)) {
+                    String data = OnlinePlay.extractStr(obj, "data");
+                    String[] parts = data.split(",");
+                    if (parts.length >= 2) {
+                        int r = Integer.parseInt(parts[0]), c = Integer.parseInt(parts[1]);
+                        int player = OnlinePlay.extractInt(obj, "player");
+                        board[r][c] = player;
+                        lastR[0] = r;
+                        lastC[0] = c;
+                        stepCount[0]++;
+                        changed = true;
+                    }
+                } else if ("RESET".equals(type)) {
+                    for (int[] row : board) java.util.Arrays.fill(row, 0);
+                    lastR[0] = lastC[0] = -1;
+                    stepCount[0] = 0;
+                    changed = true;
+                } else if ("SURRENDER".equals(type)) {
+                    int loser = OnlinePlay.extractInt(obj, "player");
+                    String winner = loser == 1 ? guestName : hostName;
+                    SwingUtilities.invokeLater(() -> info.setText(winner + " 获胜（对方投降）"));
+                    changed = true;
+                }
+                pos = end + 1;
+            }
+            if (changed) {
+                int sc = stepCount[0];
+                SwingUtilities.invokeLater(() -> {
+                    info.setText("⚫ " + hostName + "  vs  ⚪ " + guestName + "  |  第 " + sc + " 步");
+                    boardPanel.repaint();
+                });
+            }
+            if ("finished".equals(status)) {
+                ((Timer) e.getSource()).stop();
+                SwingUtilities.invokeLater(() -> info.setText(info.getText() + "  — 对局结束"));
+            }
+        });
+
+        d.setLayout(new BorderLayout());
+        d.add(boardPanel, BorderLayout.CENTER);
+
+        JPanel bottom = new JPanel(new BorderLayout());
+        bottom.setBackground(new Color(30, 34, 42));
+        bottom.add(info, BorderLayout.CENTER);
+        JButton closeBtn = styledButton("退出观战", new Color(200, 205, 215), new Color(50, 40, 40));
+        closeBtn.addActionListener(e -> { alive[0] = false; pollTimer.stop(); d.dispose(); });
+        JPanel btnWrap = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 4));
+        btnWrap.setBackground(new Color(30, 34, 42));
+        btnWrap.add(closeBtn);
+        bottom.add(btnWrap, BorderLayout.SOUTH);
+        d.add(bottom, BorderLayout.SOUTH);
+
+        darkDialog(d);
+        d.pack();
+        d.setMinimumSize(new Dimension(500, 560));
+        d.setLocationRelativeTo(this);
+        d.addWindowListener(new WindowAdapter() {
+            @Override public void windowClosing(WindowEvent e) { alive[0] = false; pollTimer.stop(); }
+        });
+
+        pollTimer.setInitialDelay(0);
+        pollTimer.start();
+        d.setVisible(true);
     }
 
     // ───────── 局域网对战 ─────────
@@ -1693,7 +1914,7 @@ public class LobbyFrame extends JFrame {
         UIManager.put("TextField.font", font);
     }
 
-    private int showChoiceDialog(String title, String opt1, String opt2) {
+    private int showChoiceDialog(String title, String... opts) {
         JDialog d = new JDialog(this, title, true);
         d.setLayout(new BorderLayout());
         int[] result = {-1};
@@ -1703,18 +1924,21 @@ public class LobbyFrame extends JFrame {
         lb.setForeground(new Color(220, 225, 235));
         lb.setBorder(BorderFactory.createEmptyBorder(20, 20, 10, 20));
 
-        JButton b1 = styledButton(opt1, new Color(200, 220, 200), new Color(35, 50, 40));
-        b1.setPreferredSize(new Dimension(120, 34));
-        b1.addActionListener(e -> { result[0] = 0; d.dispose(); });
-
-        JButton b2 = styledButton(opt2, new Color(180, 200, 220), new Color(38, 44, 56));
-        b2.setPreferredSize(new Dimension(120, 34));
-        b2.addActionListener(e -> { result[0] = 1; d.dispose(); });
-
+        Color[][] colors = {
+            {new Color(200, 220, 200), new Color(35, 50, 40)},
+            {new Color(180, 200, 220), new Color(38, 44, 56)},
+            {new Color(220, 200, 180), new Color(56, 44, 30)}
+        };
         JPanel bp = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 0));
         bp.setBorder(BorderFactory.createEmptyBorder(5, 20, 18, 20));
-        bp.add(b1);
-        bp.add(b2);
+        for (int i = 0; i < opts.length; i++) {
+            int idx = i;
+            Color[] c = colors[i % colors.length];
+            JButton b = styledButton(opts[i], c[0], c[1]);
+            b.setPreferredSize(new Dimension(120, 34));
+            b.addActionListener(e -> { result[0] = idx; d.dispose(); });
+            bp.add(b);
+        }
 
         d.add(lb, BorderLayout.CENTER);
         d.add(bp, BorderLayout.SOUTH);
