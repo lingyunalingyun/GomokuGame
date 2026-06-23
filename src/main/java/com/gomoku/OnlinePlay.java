@@ -43,6 +43,8 @@ public class OnlinePlay implements NetworkPlay {
     private volatile boolean running;
     private int lastEventId;
 
+    private String roomCode = "";
+
     public OnlinePlay(int roomId, int myPlayer) {
         this.roomId = roomId;
         this.myPlayer = myPlayer;
@@ -50,6 +52,8 @@ public class OnlinePlay implements NetworkPlay {
 
     public int getRoomId() { return roomId; }
     public int getMyPlayer() { return myPlayer; }
+    public String getRoomCode() { return roomCode; }
+    public void setRoomCode(String code) { this.roomCode = code != null ? code : ""; }
 
     public void sendRematch() {
         post("rematch", "{\"room_id\":" + roomId + ",\"player\":" + myPlayer + "}");

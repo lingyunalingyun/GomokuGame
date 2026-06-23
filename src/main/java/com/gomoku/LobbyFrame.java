@@ -552,9 +552,10 @@ public class LobbyFrame extends JFrame {
             return;
         }
         int roomId = OnlinePlay.extractInt(resp, "room_id");
+        String roomCode = OnlinePlay.extractStr(resp, "room_code");
 
         JDialog d = new JDialog(this, "等待对手", true);
-        JLabel lb = new JLabel("<html><center>房间已创建，等待对手加入...<br>房间号: " + roomId + "</center></html>", SwingConstants.CENTER);
+        JLabel lb = new JLabel("<html><center>房间已创建，等待对手加入...<br>房间号: " + roomCode + "</center></html>", SwingConstants.CENTER);
         lb.setFont(new Font("Microsoft YaHei", Font.PLAIN, 14));
         lb.setBorder(BorderFactory.createEmptyBorder(15, 20, 5, 20));
         JButton cancel = styledButton("取消", new Color(200, 205, 215), new Color(50, 40, 40));
@@ -593,14 +594,15 @@ public class LobbyFrame extends JFrame {
 
         if (ok.get()) {
             OnlinePlay net = new OnlinePlay(roomId, 1);
+            net.setRoomCode(roomCode);
             launchGame(null, net, GameLogic.BLACK, "在线对战（你执黑）");
         } else {
             OnlinePlay.post("cancel_room", "{\"room_id\":" + roomId + "}");
         }
     }
 
-    private record RoomEntry(int id, String name, String hostName, String hostAvatar) {
-        @Override public String toString() { return name + "  —  " + hostName; }
+    private record RoomEntry(int id, String roomCode, String name, String hostName, String hostAvatar) {
+        @Override public String toString() { return "[" + roomCode + "] " + name + "  —  " + hostName; }
     }
 
     private final java.util.Map<String, Image> avatarCache = new java.util.concurrent.ConcurrentHashMap<>();
@@ -665,7 +667,7 @@ public class LobbyFrame extends JFrame {
             JLabel nameLabel = new JLabel(value.name());
             nameLabel.setFont(new Font("Microsoft YaHei", Font.BOLD, 13));
             nameLabel.setForeground(new Color(220, 225, 235));
-            JLabel hostLabel = new JLabel(value.hostName() + "  #" + value.id());
+            JLabel hostLabel = new JLabel(value.hostName() + "  " + value.roomCode());
             hostLabel.setFont(new Font("Microsoft YaHei", Font.PLAIN, 11));
             hostLabel.setForeground(new Color(140, 145, 155));
             text.add(nameLabel);
@@ -678,14 +680,54 @@ public class LobbyFrame extends JFrame {
 
         AtomicReference<Integer> selectedRoom = new AtomicReference<>();
         AtomicReference<String> selectedHost = new AtomicReference<>();
+        AtomicReference<String> selectedCode = new AtomicReference<>();
         AtomicBoolean alive = new AtomicBoolean(true);
+        java.util.List<RoomEntry> allRooms = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
+        JTextField searchField = new JTextField();
+        searchField.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
+        searchField.setBackground(new Color(45, 50, 60));
+        searchField.setForeground(new Color(220, 225, 235));
+        searchField.setCaretColor(new Color(200, 205, 215));
+        searchField.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(60, 65, 75)), BorderFactory.createEmptyBorder(4, 6, 4, 6)));
+        searchField.setText("搜索房间号 / 房主名");
+        searchField.setForeground(new Color(100, 105, 115));
+        searchField.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override public void focusGained(java.awt.event.FocusEvent e) {
+                if ("搜索房间号 / 房主名".equals(searchField.getText())) {
+                    searchField.setText(""); searchField.setForeground(new Color(220, 225, 235));
+                }
+            }
+            @Override public void focusLost(java.awt.event.FocusEvent e) {
+                if (searchField.getText().isEmpty()) {
+                    searchField.setText("搜索房间号 / 房主名"); searchField.setForeground(new Color(100, 105, 115));
+                }
+            }
+        });
+
+        Runnable applyFilter = () -> {
+            String raw = searchField.getText().trim();
+            String q = "搜索房间号 / 房主名".equals(raw) ? "" : raw.toUpperCase();
+            int sel = list.getSelectedIndex();
+            model.clear();
+            for (RoomEntry r : allRooms) {
+                if (q.isEmpty() || r.roomCode().toUpperCase().contains(q) || r.hostName().toUpperCase().contains(q))
+                    model.addElement(r);
+            }
+            if (sel >= 0 && sel < model.size()) list.setSelectedIndex(sel);
+        };
+        searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { applyFilter.run(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { applyFilter.run(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { applyFilter.run(); }
+        });
 
         Runnable refreshList = () -> {
             String resp = OnlinePlay.get("list");
             if (resp == null || !resp.contains("\"success\":true")) return;
             SwingUtilities.invokeLater(() -> {
-                int sel = list.getSelectedIndex();
-                model.clear();
+                allRooms.clear();
                 int pos = 0;
                 while (true) {
                     int s = resp.indexOf("{\"id\":", pos);
@@ -694,13 +736,14 @@ public class LobbyFrame extends JFrame {
                     if (e < 0) break;
                     String obj = resp.substring(s, e + 1);
                     int id = OnlinePlay.extractInt(obj, "id");
+                    String code = OnlinePlay.extractStr(obj, "room_code");
                     String rname = OnlinePlay.extractStr(obj, "name");
                     String host = OnlinePlay.extractStr(obj, "host_name");
                     String avatar = OnlinePlay.extractStr(obj, "host_avatar");
-                    model.addElement(new RoomEntry(id, rname, host, avatar));
+                    allRooms.add(new RoomEntry(id, code, rname, host, avatar));
                     pos = e + 1;
                 }
-                if (sel >= 0 && sel < model.size()) list.setSelectedIndex(sel);
+                applyFilter.run();
             });
         };
 
@@ -711,10 +754,14 @@ public class LobbyFrame extends JFrame {
             }
         }, "RoomRefresh").start();
 
-        JLabel hint = new JLabel("  房间列表（每 2 秒刷新）");
+        JPanel topPanel = new JPanel(new BorderLayout(0, 4));
+        topPanel.setOpaque(false);
+        topPanel.setBorder(BorderFactory.createEmptyBorder(8, 8, 5, 8));
+        JLabel hint = new JLabel("房间列表（每 2 秒刷新）");
         hint.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
         hint.setForeground(new Color(100, 100, 100));
-        hint.setBorder(BorderFactory.createEmptyBorder(8, 5, 5, 5));
+        topPanel.add(hint, BorderLayout.NORTH);
+        topPanel.add(searchField, BorderLayout.SOUTH);
 
         JButton joinBtn = styledButton("加入", new Color(200, 220, 200), new Color(35, 50, 40));
         joinBtn.addActionListener(e -> {
@@ -733,6 +780,7 @@ public class LobbyFrame extends JFrame {
             }
             selectedRoom.set(rid);
             selectedHost.set(OnlinePlay.extractStr(resp, "host_name"));
+            selectedCode.set(entry.roomCode());
             alive.set(false);
             d.dispose();
         });
@@ -750,10 +798,10 @@ public class LobbyFrame extends JFrame {
         bp.add(joinBtn);
         bp.add(cancelBtn);
         d.setLayout(new BorderLayout());
-        d.add(hint, BorderLayout.NORTH);
+        d.add(topPanel, BorderLayout.NORTH);
         d.add(new JScrollPane(list), BorderLayout.CENTER);
         d.add(bp, BorderLayout.SOUTH);
-        d.setSize(380, 320);
+        d.setSize(380, 360);
         d.setLocationRelativeTo(this);
         darkDialog(d);
         d.setVisible(true);
@@ -761,6 +809,7 @@ public class LobbyFrame extends JFrame {
         Integer rid = selectedRoom.get();
         if (rid == null) return;
         OnlinePlay net = new OnlinePlay(rid, 2);
+        net.setRoomCode(selectedCode.get() != null ? selectedCode.get() : "");
         launchGame(null, net, GameLogic.WHITE, "在线对战（你执白）");
     }
 
@@ -1068,7 +1117,7 @@ public class LobbyFrame extends JFrame {
                     } else if (rmResult == 2) {
                         op.disconnect();
                         returnToLobby();
-                        waitForNewOpponent(op.getRoomId());
+                        waitForNewOpponent(op.getRoomId(), op.getRoomCode());
                     } else {
                         OnlinePlay.post("leave_room", "{\"room_id\":" + op.getRoomId() + ",\"player\":" + op.getMyPlayer() + "}");
                         op.disconnect();
@@ -1245,9 +1294,9 @@ public class LobbyFrame extends JFrame {
         return result[0];
     }
 
-    private void waitForNewOpponent(int roomId) {
+    private void waitForNewOpponent(int roomId, String roomCode) {
         JDialog d = new JDialog(this, "等待对手", true);
-        JLabel lb = new JLabel("<html><center>对方已退出，等待新对手加入...<br>房间号: " + roomId + "</center></html>", SwingConstants.CENTER);
+        JLabel lb = new JLabel("<html><center>对方已退出，等待新对手加入...<br>房间号: " + roomCode + "</center></html>", SwingConstants.CENTER);
         lb.setFont(new Font("Microsoft YaHei", Font.PLAIN, 14));
         lb.setBorder(BorderFactory.createEmptyBorder(15, 20, 5, 20));
         JButton cancel = styledButton("取消", new Color(200, 205, 215), new Color(50, 40, 40));
@@ -1283,6 +1332,7 @@ public class LobbyFrame extends JFrame {
         d.setVisible(true);
         if (ok.get()) {
             OnlinePlay net = new OnlinePlay(roomId, 1);
+            net.setRoomCode(roomCode);
             launchGame(null, net, GameLogic.BLACK, "在线对战（你执黑）");
         } else {
             OnlinePlay.post("cancel_room", "{\"room_id\":" + roomId + "}");
