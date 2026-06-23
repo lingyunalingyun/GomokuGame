@@ -34,6 +34,7 @@ public class LobbyFrame extends JFrame {
     private Image avatarImage;
     private JLabel avatarName;
     private JLabel infoLevel;
+    private JLabel infoMid;
     private JLabel infoRole;
     private JButton authButton;
     private JPanel avatarCircle;
@@ -248,6 +249,12 @@ public class LobbyFrame extends JFrame {
         infoLevel.setAlignmentX(Component.LEFT_ALIGNMENT);
         panel.add(infoLevel);
 
+        infoMid = new JLabel();
+        infoMid.setFont(new Font("Microsoft YaHei", Font.PLAIN, 11));
+        infoMid.setForeground(new Color(120, 120, 120));
+        infoMid.setAlignmentX(Component.LEFT_ALIGNMENT);
+        panel.add(infoMid);
+
         infoRole = new JLabel();
         infoRole.setFont(new Font("Microsoft YaHei", Font.PLAIN, 11));
         infoRole.setForeground(new Color(140, 140, 140));
@@ -309,6 +316,7 @@ public class LobbyFrame extends JFrame {
             avatarImage = null;
             avatarName.setText(currentUser.username());
             infoLevel.setText("未登录");
+            infoMid.setText("");
             infoRole.setText(" ");
             authButton.setText("登录");
             statScore.setText("");
@@ -317,6 +325,7 @@ public class LobbyFrame extends JFrame {
         } else {
             avatarName.setText(currentUser.username());
             infoLevel.setText("Lv." + currentUser.level());
+            infoMid.setText("MID: " + currentUser.id());
             infoRole.setText(switch (currentUser.role()) {
                 case "owner" -> "站长";
                 case "admin" -> "管理员";
@@ -626,7 +635,7 @@ public class LobbyFrame extends JFrame {
         }
     }
 
-    private record RoomEntry(int id, String roomCode, String name, String hostName, String hostAvatar, boolean hasPassword) {
+    private record RoomEntry(int id, String roomCode, String name, String hostName, String hostAvatar, boolean hasPassword, int hostUid) {
         @Override public String toString() { return "[" + roomCode + "] " + name + "  —  " + hostName; }
     }
 
@@ -717,28 +726,29 @@ public class LobbyFrame extends JFrame {
         searchField.setCaretColor(new Color(200, 205, 215));
         searchField.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(new Color(60, 65, 75)), BorderFactory.createEmptyBorder(4, 6, 4, 6)));
-        searchField.setText("搜索房间号 / 房主名");
+        searchField.setText("搜索房间号 / 房主名 / MID");
         searchField.setForeground(new Color(100, 105, 115));
         searchField.addFocusListener(new java.awt.event.FocusAdapter() {
             @Override public void focusGained(java.awt.event.FocusEvent e) {
-                if ("搜索房间号 / 房主名".equals(searchField.getText())) {
+                if ("搜索房间号 / 房主名 / MID".equals(searchField.getText())) {
                     searchField.setText(""); searchField.setForeground(new Color(220, 225, 235));
                 }
             }
             @Override public void focusLost(java.awt.event.FocusEvent e) {
                 if (searchField.getText().isEmpty()) {
-                    searchField.setText("搜索房间号 / 房主名"); searchField.setForeground(new Color(100, 105, 115));
+                    searchField.setText("搜索房间号 / 房主名 / MID"); searchField.setForeground(new Color(100, 105, 115));
                 }
             }
         });
 
         Runnable applyFilter = () -> {
             String raw = searchField.getText().trim();
-            String q = "搜索房间号 / 房主名".equals(raw) ? "" : raw.toUpperCase();
+            String q = "搜索房间号 / 房主名 / MID".equals(raw) ? "" : raw.toUpperCase();
             int sel = list.getSelectedIndex();
             model.clear();
             for (RoomEntry r : allRooms) {
-                if (q.isEmpty() || r.roomCode().toUpperCase().contains(q) || r.hostName().toUpperCase().contains(q))
+                if (q.isEmpty() || r.roomCode().toUpperCase().contains(q) || r.hostName().toUpperCase().contains(q)
+                        || String.valueOf(r.hostUid()).contains(q))
                     model.addElement(r);
             }
             if (sel >= 0 && sel < model.size()) list.setSelectedIndex(sel);
@@ -767,7 +777,8 @@ public class LobbyFrame extends JFrame {
                     String host = OnlinePlay.extractStr(obj, "host_name");
                     String avatar = OnlinePlay.extractStr(obj, "host_avatar");
                     boolean hasPwd = obj.contains("\"has_password\":true");
-                    allRooms.add(new RoomEntry(id, code, rname, host, avatar, hasPwd));
+                    int huid = OnlinePlay.extractInt(obj, "host_user_id");
+                    allRooms.add(new RoomEntry(id, code, rname, host, avatar, hasPwd, huid));
                     pos = e + 1;
                 }
                 applyFilter.run();
@@ -849,33 +860,80 @@ public class LobbyFrame extends JFrame {
 
     // ───────── 观战 ─────────
 
-    private record SpectateEntry(int id, String roomCode, String name, String hostName, String guestName) {
-        @Override public String toString() { return "[" + roomCode + "] " + hostName + " vs " + guestName; }
+    private record SpectateEntry(int id, String roomCode, String name, String hostName, String guestName,
+                                  int hostUid, int guestUid, int spectators) {
+        @Override public String toString() {
+            String sp = spectators > 0 ? " [" + spectators + "人观战]" : "";
+            return "[" + roomCode + "] " + hostName + " vs " + guestName + sp;
+        }
     }
 
     private void spectateOnlineRoom() {
         JDialog d = new JDialog(this, "选择观战房间", true);
         d.setLayout(new BorderLayout());
 
+        java.util.List<SpectateEntry> allRooms = new java.util.ArrayList<>();
         DefaultListModel<SpectateEntry> model = new DefaultListModel<>();
         JList<SpectateEntry> list = new JList<>(model);
         list.setBackground(new Color(38, 42, 50));
         list.setForeground(new Color(200, 205, 215));
         list.setSelectionBackground(new Color(60, 80, 120));
+        list.setSelectionForeground(new Color(240, 245, 255));
         list.setFont(new Font("Microsoft YaHei", Font.PLAIN, 13));
         list.setFixedCellHeight(36);
 
+        JTextField searchField = new JTextField("搜索房间号 / MID");
+        searchField.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
+        searchField.setForeground(new Color(120, 120, 120));
+        searchField.setBackground(new Color(45, 50, 60));
+        searchField.setCaretColor(new Color(200, 200, 200));
+        searchField.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(60, 65, 75)), BorderFactory.createEmptyBorder(4, 6, 4, 6)));
+        searchField.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override public void focusGained(java.awt.event.FocusEvent e) {
+                if ("搜索房间号 / MID".equals(searchField.getText())) {
+                    searchField.setText(""); searchField.setForeground(new Color(200, 205, 215));
+                }
+            }
+            @Override public void focusLost(java.awt.event.FocusEvent e) {
+                if (searchField.getText().isBlank()) {
+                    searchField.setText("搜索房间号 / MID"); searchField.setForeground(new Color(120, 120, 120));
+                }
+            }
+        });
+
+        Runnable applyFilter = () -> {
+            String q = searchField.getText().trim().toLowerCase();
+            boolean filtering = !q.isEmpty() && !"搜索房间号 / mid".equals(q);
+            model.clear();
+            for (SpectateEntry r : allRooms) {
+                if (filtering && !r.roomCode().toLowerCase().contains(q)
+                        && !String.valueOf(r.hostUid()).contains(q)
+                        && !String.valueOf(r.guestUid()).contains(q)) continue;
+                model.addElement(r);
+            }
+        };
+        searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { applyFilter.run(); }
+            @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { applyFilter.run(); }
+            @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { applyFilter.run(); }
+        });
+
+        JPanel topPanel = new JPanel(new BorderLayout());
+        topPanel.setBackground(new Color(30, 34, 42));
+        topPanel.setBorder(BorderFactory.createEmptyBorder(8, 8, 5, 8));
         JLabel hint = new JLabel("正在进行的对局（每 2 秒刷新）");
         hint.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
         hint.setForeground(new Color(100, 100, 100));
-        hint.setBorder(BorderFactory.createEmptyBorder(8, 8, 5, 8));
+        topPanel.add(hint, BorderLayout.NORTH);
+        topPanel.add(searchField, BorderLayout.SOUTH);
 
         Timer refresh = new Timer(2000, e -> {
             String resp = OnlinePlay.get("spectate_list");
             if (resp == null || !resp.contains("\"rooms\"")) return;
             SwingUtilities.invokeLater(() -> {
                 int sel = list.getSelectedIndex();
-                model.clear();
+                allRooms.clear();
                 int pos = 0;
                 while (true) {
                     int s = resp.indexOf("{\"id\":", pos);
@@ -888,9 +946,13 @@ public class LobbyFrame extends JFrame {
                     String rname = OnlinePlay.extractStr(obj, "name");
                     String host = OnlinePlay.extractStr(obj, "host_name");
                     String guest = OnlinePlay.extractStr(obj, "guest_name");
-                    model.addElement(new SpectateEntry(id, code, rname, host, guest));
+                    int huid = OnlinePlay.extractInt(obj, "host_user_id");
+                    int guid = OnlinePlay.extractInt(obj, "guest_user_id");
+                    int sp = OnlinePlay.extractInt(obj, "spectators");
+                    allRooms.add(new SpectateEntry(id, code, rname, host, guest, huid, guid, sp));
                     pos = end + 1;
                 }
+                applyFilter.run();
                 if (sel >= 0 && sel < model.size()) list.setSelectedIndex(sel);
             });
         });
@@ -914,12 +976,12 @@ public class LobbyFrame extends JFrame {
         btnPanel.add(watchBtn);
         btnPanel.add(cancelBtn);
 
-        d.add(hint, BorderLayout.NORTH);
+        d.add(topPanel, BorderLayout.NORTH);
         d.add(new JScrollPane(list), BorderLayout.CENTER);
         d.add(btnPanel, BorderLayout.SOUTH);
         d.getContentPane().setBackground(new Color(30, 34, 42));
         darkDialog(d);
-        d.setSize(380, 320);
+        d.setSize(380, 360);
         d.setLocationRelativeTo(this);
         d.addWindowListener(new WindowAdapter() {
             @Override public void windowClosing(WindowEvent e) { refresh.stop(); }
@@ -928,70 +990,68 @@ public class LobbyFrame extends JFrame {
     }
 
     private void launchSpectate(int roomId, String hostName, String guestName) {
-        JDialog d = new JDialog(this, "观战 — " + hostName + " vs " + guestName, false);
-        int[][] board = new int[15][15];
-        int[] lastR = {-1}, lastC = {-1};
-        int[] stepCount = {0};
-        boolean[] alive = {true};
+        GameLogic game = new GameLogic();
+        setTitle("观战 — " + hostName + " vs " + guestName);
 
-        JPanel boardPanel = new JPanel() {
-            @Override protected void paintComponent(Graphics g) {
-                super.paintComponent(g);
-                Graphics2D g2 = (Graphics2D) g;
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                int w = getWidth(), h = getHeight();
-                int sz = Math.min(w, h);
-                int cell = sz / 16;
-                int ox = (w - cell * 14) / 2, oy = (h - cell * 14) / 2;
+        JLabel statusLabel = new JLabel("", SwingConstants.CENTER);
+        statusLabel.setFont(new Font("Microsoft YaHei", Font.BOLD, 18));
+        statusLabel.setForeground(new Color(230, 230, 230));
 
-                g2.setColor(new Color(40, 44, 52));
-                g2.fillRect(0, 0, w, h);
-                g2.setColor(new Color(70, 75, 85));
-                for (int i = 0; i < 15; i++) {
-                    g2.drawLine(ox, oy + i * cell, ox + 14 * cell, oy + i * cell);
-                    g2.drawLine(ox + i * cell, oy, ox + i * cell, oy + 14 * cell);
-                }
+        BoardPanel boardPanel = new BoardPanel(game, statusLabel);
+        boardPanel.setNetworkPlay(null, -1);
 
-                for (int r = 0; r < 15; r++) {
-                    for (int c = 0; c < 15; c++) {
-                        if (board[r][c] == 0) continue;
-                        int cx = ox + c * cell, cy = oy + r * cell;
-                        int ps = (int) (cell * 0.42);
-                        if (board[r][c] == GameLogic.BLACK) {
-                            g2.setColor(new Color(30, 30, 30));
-                            g2.fillOval(cx - ps, cy - ps, ps * 2, ps * 2);
-                        } else {
-                            g2.setColor(new Color(230, 230, 230));
-                            g2.fillOval(cx - ps, cy - ps, ps * 2, ps * 2);
-                            g2.setColor(new Color(80, 80, 80));
-                            g2.drawOval(cx - ps, cy - ps, ps * 2, ps * 2);
-                        }
-                        if (r == lastR[0] && c == lastC[0]) {
-                            g2.setColor(new Color(230, 80, 80));
-                            int ms = ps / 3;
-                            g2.fillOval(cx - ms, cy - ms, ms * 2, ms * 2);
-                        }
-                    }
-                }
+        OnlinePlay.post("spectate_join", "{\"room_id\":" + roomId + "}");
+
+        String[] names = {hostName, guestName};
+        Image[] avatars = {null, null};
+        int[] countdown = {30, 30};
+        int[] totalTime = {0, 0};
+        int[][] stats = new int[2][5];
+
+        JPanel blackCard = playerCard(names, avatars, 0, GameLogic.BLACK, game, countdown, totalTime, stats);
+        JPanel whiteCard = playerCard(names, avatars, 1, GameLogic.WHITE, game, countdown, totalTime, stats);
+
+        JLabel totalLabel = new JLabel("", SwingConstants.CENTER);
+        totalLabel.setFont(new Font("Microsoft YaHei", Font.BOLD, 18));
+        totalLabel.setForeground(new Color(160, 165, 175));
+        Runnable updateTotal = () -> totalLabel.setText("<html><center><span style='font-size:9px;color:#888'>对局用时</span><br>" + fmtTime(totalTime[0] + totalTime[1]) + "</center></html>");
+        updateTotal.run();
+
+        long[] lastSec = {System.currentTimeMillis()};
+        javax.swing.Timer clock = new javax.swing.Timer(200, e -> {
+            if (game.isGameOver()) return;
+            long now = System.currentTimeMillis();
+            if (now - lastSec[0] >= 1000) {
+                lastSec[0] = now;
+                int ci = game.getCurrentPlayer() == GameLogic.BLACK ? 0 : 1;
+                totalTime[ci]++;
+                if (countdown[ci] > 0) countdown[ci]--;
+                updateTotal.run();
             }
-        };
-        boardPanel.setPreferredSize(new Dimension(480, 480));
-        boardPanel.setBackground(new Color(40, 44, 52));
+            blackCard.repaint(); whiteCard.repaint();
+        });
+        clock.start();
 
-        JLabel info = new JLabel("⚫ " + hostName + "  vs  ⚪ " + guestName + "  |  第 0 步", SwingConstants.CENTER);
-        info.setFont(new Font("Microsoft YaHei", Font.PLAIN, 13));
-        info.setForeground(new Color(200, 205, 215));
-        info.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
+        JPanel side = new JPanel(new BorderLayout());
+        side.setBackground(new Color(30, 34, 42));
+        side.setPreferredSize(new Dimension(160, 0));
+        side.setBorder(BorderFactory.createEmptyBorder(12, 8, 12, 8));
+        side.add(blackCard, BorderLayout.NORTH);
+        side.add(totalLabel, BorderLayout.CENTER);
+        side.add(whiteCard, BorderLayout.SOUTH);
+
+        JLabel modeLabel = new JLabel("观战模式", SwingConstants.CENTER);
+        modeLabel.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
+        modeLabel.setForeground(new Color(100, 100, 100));
 
         int[] lastEventId = {0};
 
-        Timer pollTimer = new Timer(500, e -> {
+        javax.swing.Timer pollTimer = new javax.swing.Timer(500, e -> {
             String resp = OnlinePlay.get("poll&room_id=" + roomId + "&after=" + lastEventId[0]);
             if (resp == null) return;
             String status = OnlinePlay.extractStr(resp, "status");
 
             int pos = 0;
-            boolean changed = false;
             while (true) {
                 int s = resp.indexOf("\"id\":", pos);
                 if (s < 0) break;
@@ -1007,64 +1067,70 @@ public class LobbyFrame extends JFrame {
                     String[] parts = data.split(",");
                     if (parts.length >= 2) {
                         int r = Integer.parseInt(parts[0]), c = Integer.parseInt(parts[1]);
-                        int player = OnlinePlay.extractInt(obj, "player");
-                        board[r][c] = player;
-                        lastR[0] = r;
-                        lastC[0] = c;
-                        stepCount[0]++;
-                        changed = true;
+                        boardPanel.receiveRemoteMove(r, c);
+                        int ci = game.getCurrentPlayer() == GameLogic.BLACK ? 0 : 1;
+                        countdown[ci] = 30;
                     }
                 } else if ("RESET".equals(type)) {
-                    for (int[] row : board) java.util.Arrays.fill(row, 0);
-                    lastR[0] = lastC[0] = -1;
-                    stepCount[0] = 0;
-                    changed = true;
+                    boardPanel.receiveRemoteReset();
+                    countdown[0] = countdown[1] = 30;
+                    totalTime[0] = totalTime[1] = 0;
+                    updateTotal.run();
                 } else if ("SURRENDER".equals(type)) {
                     int loser = OnlinePlay.extractInt(obj, "player");
-                    String winner = loser == 1 ? guestName : hostName;
-                    SwingUtilities.invokeLater(() -> info.setText(winner + " 获胜（对方投降）"));
-                    changed = true;
+                    SwingUtilities.invokeLater(() -> {
+                        game.surrender(loser);
+                        boardPanel.repaint();
+                        boardPanel.updateStatusPublic();
+                    });
                 }
                 pos = end + 1;
             }
-            if (changed) {
-                int sc = stepCount[0];
-                SwingUtilities.invokeLater(() -> {
-                    info.setText("⚫ " + hostName + "  vs  ⚪ " + guestName + "  |  第 " + sc + " 步");
-                    boardPanel.repaint();
-                });
-            }
             if ("finished".equals(status)) {
-                ((Timer) e.getSource()).stop();
-                SwingUtilities.invokeLater(() -> info.setText(info.getText() + "  — 对局结束"));
+                ((javax.swing.Timer) e.getSource()).stop();
+                clock.stop();
             }
         });
 
-        d.setLayout(new BorderLayout());
-        d.add(boardPanel, BorderLayout.CENTER);
+        Runnable doReturn = () -> {
+            pollTimer.stop();
+            clock.stop();
+            OnlinePlay.post("spectate_leave", "{\"room_id\":" + roomId + "}");
+            returnToLobby();
+        };
 
-        JPanel bottom = new JPanel(new BorderLayout());
-        bottom.setBackground(new Color(30, 34, 42));
-        bottom.add(info, BorderLayout.CENTER);
-        JButton closeBtn = styledButton("退出观战", new Color(200, 205, 215), new Color(50, 40, 40));
-        closeBtn.addActionListener(e -> { alive[0] = false; pollTimer.stop(); d.dispose(); });
-        JPanel btnWrap = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 4));
-        btnWrap.setBackground(new Color(30, 34, 42));
-        btnWrap.add(closeBtn);
-        bottom.add(btnWrap, BorderLayout.SOUTH);
-        d.add(bottom, BorderLayout.SOUTH);
+        JButton backBtn = styledButton("退出观战", new Color(180, 200, 220), new Color(38, 44, 56));
+        backBtn.addActionListener(e -> doReturn.run());
 
-        darkDialog(d);
-        d.pack();
-        d.setMinimumSize(new Dimension(500, 560));
-        d.setLocationRelativeTo(this);
-        d.addWindowListener(new WindowAdapter() {
-            @Override public void windowClosing(WindowEvent e) { alive[0] = false; pollTimer.stop(); }
-        });
+        JPanel top = new JPanel(new BorderLayout());
+        top.setBackground(new Color(30, 34, 42));
+        top.add(statusLabel, BorderLayout.CENTER);
+        top.add(modeLabel, BorderLayout.EAST);
+        modeLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 10));
+
+        JPanel bottom = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 4));
+        bottom.add(backBtn);
+
+        JPanel gamePanel = new JPanel(new BorderLayout());
+        boardPanel.setBackground(new Color(40, 44, 52));
+        gamePanel.add(top, BorderLayout.NORTH);
+        gamePanel.add(boardPanel, BorderLayout.CENTER);
+        gamePanel.add(side, BorderLayout.EAST);
+        gamePanel.add(bottom, BorderLayout.SOUTH);
+
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        if (gameWindowListener != null) removeWindowListener(gameWindowListener);
+        gameWindowListener = new WindowAdapter() {
+            @Override public void windowClosing(WindowEvent e) { doReturn.run(); }
+        };
+        addWindowListener(gameWindowListener);
+
+        setContentPane(gamePanel);
+        pack();
+        setLocationRelativeTo(null);
 
         pollTimer.setInitialDelay(0);
         pollTimer.start();
-        d.setVisible(true);
     }
 
     // ───────── 局域网对战 ─────────
