@@ -559,12 +559,18 @@ public class LobbyFrame extends JFrame {
         String name = JOptionPane.showInputDialog(this, "房间名称：", def);
         if (name == null || name.isBlank()) return;
 
+        String password = JOptionPane.showInputDialog(this, "房间密码（留空则无密码）：", "");
+        if (password == null) return;
+        password = password.trim();
+
         String displayName = currentUser.displayName();
+        String pwdJson = password.isEmpty() ? "" : ",\"password\":\"" + password.replace("\"", "\\\"") + "\"";
         String resp = OnlinePlay.post("create",
                 "{\"name\":\"" + name.trim().replace("\"", "\\\"") + "\","
                 + "\"user_id\":" + currentUser.id() + ","
                 + "\"user_name\":\"" + displayName.replace("\"", "\\\"") + "\","
-                + "\"host_avatar\":\"" + currentUser.avatar().replace("\"", "\\\"") + "\"}");
+                + "\"host_avatar\":\"" + currentUser.avatar().replace("\"", "\\\"") + "\""
+                + pwdJson + "}");
         if (resp == null || !resp.contains("\"success\":true")) {
             JOptionPane.showMessageDialog(this, "创建房间失败");
             return;
@@ -619,7 +625,7 @@ public class LobbyFrame extends JFrame {
         }
     }
 
-    private record RoomEntry(int id, String roomCode, String name, String hostName, String hostAvatar) {
+    private record RoomEntry(int id, String roomCode, String name, String hostName, String hostAvatar, boolean hasPassword) {
         @Override public String toString() { return "[" + roomCode + "] " + name + "  —  " + hostName; }
     }
 
@@ -682,7 +688,8 @@ public class LobbyFrame extends JFrame {
 
             JPanel text = new JPanel(new GridLayout(2, 1));
             text.setOpaque(false);
-            JLabel nameLabel = new JLabel(value.name());
+            String lockPrefix = value.hasPassword() ? "🔒 " : "";
+            JLabel nameLabel = new JLabel(lockPrefix + value.name());
             nameLabel.setFont(new Font("Microsoft YaHei", Font.BOLD, 13));
             nameLabel.setForeground(new Color(220, 225, 235));
             JLabel hostLabel = new JLabel(value.hostName() + "  " + value.roomCode());
@@ -758,7 +765,8 @@ public class LobbyFrame extends JFrame {
                     String rname = OnlinePlay.extractStr(obj, "name");
                     String host = OnlinePlay.extractStr(obj, "host_name");
                     String avatar = OnlinePlay.extractStr(obj, "host_avatar");
-                    allRooms.add(new RoomEntry(id, code, rname, host, avatar));
+                    boolean hasPwd = obj.contains("\"has_password\":true");
+                    allRooms.add(new RoomEntry(id, code, rname, host, avatar, hasPwd));
                     pos = e + 1;
                 }
                 applyFilter.run();
@@ -786,11 +794,18 @@ public class LobbyFrame extends JFrame {
             RoomEntry entry = list.getSelectedValue();
             if (entry == null) { JOptionPane.showMessageDialog(d, "请先选择一个房间"); return; }
             int rid = entry.id();
+            String pwdParam = "";
+            if (entry.hasPassword()) {
+                String pwd = JOptionPane.showInputDialog(d, "请输入房间密码：");
+                if (pwd == null) return;
+                pwdParam = ",\"password\":\"" + pwd.trim().replace("\"", "\\\"") + "\"";
+            }
             String displayName = currentUser.displayName();
             String resp = OnlinePlay.post("join",
                     "{\"room_id\":" + rid + ","
                     + "\"user_id\":" + currentUser.id() + ","
-                    + "\"user_name\":\"" + displayName.replace("\"", "\\\"") + "\"}");
+                    + "\"user_name\":\"" + displayName.replace("\"", "\\\"") + "\""
+                    + pwdParam + "}");
             if (resp == null || !resp.contains("\"success\":true")) {
                 String err = OnlinePlay.extractStr(resp != null ? resp : "", "error");
                 JOptionPane.showMessageDialog(d, err.isEmpty() ? "加入失败" : err);
