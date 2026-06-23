@@ -292,6 +292,13 @@ public class LobbyFrame extends JFrame {
         panel.add(historyBtn);
         panel.add(Box.createVerticalStrut(6));
 
+        JButton viewShareBtn = styledButton("查看回放", new Color(220, 200, 180), new Color(56, 44, 30));
+        viewShareBtn.setAlignmentX(Component.LEFT_ALIGNMENT);
+        viewShareBtn.setMaximumSize(new Dimension(130, 30));
+        viewShareBtn.addActionListener(e -> viewSharedReplay());
+        panel.add(viewShareBtn);
+        panel.add(Box.createVerticalStrut(6));
+
         authButton = styledButton("", new Color(180, 200, 220), new Color(40, 48, 62));
         authButton.setAlignmentX(Component.LEFT_ALIGNMENT);
         authButton.setMaximumSize(new Dimension(130, 30));
@@ -435,6 +442,7 @@ public class LobbyFrame extends JFrame {
             @Override public boolean isCellEditable(int r, int c) { return false; }
         };
         java.util.List<String> movesDataList = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        java.util.List<Integer> historyIds = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         JTable table = new JTable(tableModel);
         table.setFont(new Font("Microsoft YaHei", Font.PLAIN, 12));
         table.setRowHeight(26);
@@ -469,16 +477,18 @@ public class LobbyFrame extends JFrame {
             SwingUtilities.invokeLater(() -> {
                 tableModel.setRowCount(0);
                 movesDataList.clear();
+                historyIds.clear();
                 pageLabel.setText("第 " + currentPage[0] + "/" + totalPages[0] + " 页");
                 prevBtn.setEnabled(currentPage[0] > 1);
                 nextBtn.setEnabled(currentPage[0] < totalPages[0]);
                 int pos = 0;
                 while (true) {
-                    int s = resp.indexOf("{\"opponent\":", pos);
+                    int s = resp.indexOf("{\"id\":", pos);
                     if (s < 0) break;
                     int e = resp.indexOf('}', s);
                     if (e < 0) break;
                     String obj = resp.substring(s, e + 1);
+                    int hid = OnlinePlay.extractInt(obj, "id");
                     String opponent = OnlinePlay.extractStr(obj, "opponent");
                     String mode = switch (OnlinePlay.extractStr(obj, "mode")) { case "online" -> "在线"; case "ai" -> "人机"; case "lan" -> "局域网"; default -> "本地"; };
                     String result = switch (OnlinePlay.extractStr(obj, "result")) { case "win" -> "胜利"; case "loss" -> "失败"; default -> "平局"; };
@@ -489,6 +499,7 @@ public class LobbyFrame extends JFrame {
                     String time = OnlinePlay.extractStr(obj, "time");
                     tableModel.addRow(new Object[]{opponent, mode, result, (score > 0 ? "+" : "") + score, fmtTime(duration), moveCount, time});
                     movesDataList.add(movesStr);
+                    historyIds.add(hid);
                     pos = e + 1;
                 }
             });
@@ -521,6 +532,29 @@ public class LobbyFrame extends JFrame {
             showReplay(mv, opponent, resultText);
         });
 
+        JButton shareBtn = styledButton("分享", new Color(180, 200, 220), new Color(38, 44, 56));
+        shareBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row < 0) { JOptionPane.showMessageDialog(d, "请先选择一条对局记录"); return; }
+            if (row >= historyIds.size()) return;
+            String mv = movesDataList.get(row);
+            if (mv == null || mv.isEmpty()) { JOptionPane.showMessageDialog(d, "该对局没有回放数据"); return; }
+            int hid = historyIds.get(row);
+            new Thread(() -> {
+                String resp2 = OnlinePlay.post("share_replay", "{\"history_id\":" + hid + "}");
+                if (resp2 != null && resp2.contains("\"success\":true")) {
+                    String code = OnlinePlay.extractStr(resp2, "share_code");
+                    SwingUtilities.invokeLater(() -> {
+                        java.awt.Toolkit.getDefaultToolkit().getSystemClipboard()
+                            .setContents(new java.awt.datatransfer.StringSelection(code), null);
+                        JOptionPane.showMessageDialog(d, "分享码：" + code + "\n已复制到剪贴板！");
+                    });
+                } else {
+                    SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(d, "生成分享码失败"));
+                }
+            }, "Share").start();
+        });
+
         JPanel pagePanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
         pagePanel.setBackground(dBg);
         pagePanel.add(prevBtn);
@@ -528,6 +562,7 @@ public class LobbyFrame extends JFrame {
         pagePanel.add(nextBtn);
         pagePanel.add(Box.createHorizontalStrut(15));
         pagePanel.add(replayBtn);
+        pagePanel.add(shareBtn);
 
         JScrollPane sp = new JScrollPane(table);
         sp.getViewport().setBackground(new Color(38, 42, 52));
@@ -541,6 +576,24 @@ public class LobbyFrame extends JFrame {
 
         new Thread(loadData, "HistLoad").start();
         d.setVisible(true);
+    }
+
+    private void viewSharedReplay() {
+        String code = JOptionPane.showInputDialog(this, "请输入回放分享码：");
+        if (code == null || code.trim().isEmpty()) return;
+        code = code.trim().toUpperCase();
+        String resp = OnlinePlay.get("get_replay&code=" + code);
+        if (resp == null || !resp.contains("\"success\":true")) {
+            String err = OnlinePlay.extractStr(resp != null ? resp : "", "error");
+            JOptionPane.showMessageDialog(this, err.isEmpty() ? "获取回放失败" : err);
+            return;
+        }
+        String movesData = OnlinePlay.extractStr(resp, "moves");
+        if (movesData.isEmpty()) { JOptionPane.showMessageDialog(this, "该对局没有回放数据"); return; }
+        String player1 = OnlinePlay.extractStr(resp, "username");
+        String player2 = OnlinePlay.extractStr(resp, "opponent_name");
+        String result = switch (OnlinePlay.extractStr(resp, "result")) { case "win" -> player1 + " 胜"; case "loss" -> player2 + " 胜"; default -> "平局"; };
+        showReplay(movesData, player2, result);
     }
 
     // ───────── 模式处理 ─────────
